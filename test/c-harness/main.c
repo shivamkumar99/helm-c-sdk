@@ -1,0 +1,302 @@
+/*
+ * End-to-end harness: drives the built helm-c shared library through the real
+ * C ABI exactly the way a language binding would — create, use, free,
+ * double-free, and the leak gate. Exits non-zero on any failure.
+ */
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "helm_c.h"
+
+static int failures = 0;
+
+#define CHECK(cond, msg)                                            \
+    do {                                                            \
+        if (!(cond)) {                                              \
+            fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); \
+            failures++;                                             \
+        }                                                           \
+    } while (0)
+
+static void test_versions(void) {
+    char* v = helm_c_version();
+    CHECK(v != NULL && strlen(v) > 0, "helm_c_version returns a string");
+    char* sdk = helm_sdk_version();
+    CHECK(sdk != NULL && strncmp(sdk, "v4.", 3) == 0,
+          "helm_sdk_version reports the pinned v4 release");
+    printf("helm-c %s (helm SDK %s)\n", v ? v : "?", sdk ? sdk : "?");
+    helm_free_string(v);
+    helm_free_string(sdk);
+}
+
+static void test_string_free_null_safe(void) {
+    helm_free_string(NULL); /* must be a no-op */
+}
+
+static void test_invalid_handles(void) {
+    CHECK(helm_handle_free(0, NULL) == HELM_ERR_INVALID_HANDLE,
+          "freeing handle 0 is a defined error");
+
+    char* err = NULL;
+    CHECK(helm_handle_free(987654, &err) == HELM_ERR_INVALID_HANDLE,
+          "freeing an unknown handle is a defined error");
+    CHECK(err != NULL, "error detail provided for invalid handle");
+    helm_free_string(err);
+}
+
+static void test_release_name_validate(void) {
+    CHECK(helm_release_name_validate("valid-name", NULL) == HELM_OK,
+          "valid release name accepted");
+
+    char* err = NULL;
+    CHECK(helm_release_name_validate("Invalid_NAME!", &err) == HELM_ERR_INVALID_ARG,
+          "invalid release name rejected");
+    CHECK(err != NULL, "error detail provided for invalid name");
+    helm_free_string(err);
+
+    err = NULL;
+    CHECK(helm_release_name_validate(NULL, &err) == HELM_ERR_INVALID_ARG,
+          "NULL name rejected without crash");
+    helm_free_string(err);
+}
+
+static void test_strvals_parse(void) {
+    char* out = NULL;
+    char* err = NULL;
+    CHECK(helm_strvals_parse("a=1,b=two", &out, &err) == HELM_OK,
+          "strvals parse succeeds");
+    CHECK(out != NULL && strstr(out, "\"b\":\"two\"") != NULL,
+          "strvals JSON contains parsed pair");
+    helm_free_string(out);
+    helm_free_string(err);
+
+    out = NULL;
+    err = NULL;
+    CHECK(helm_strvals_parse("a=1,,=x=", &out, &err) == HELM_ERR_VALUES,
+          "malformed strvals rejected");
+    helm_free_string(out);
+    helm_free_string(err);
+}
+
+static void test_chart_load_missing(void) {
+    helm_handle_t h = 0;
+    char* err = NULL;
+    CHECK(helm_chart_load("does-not-exist-xyz", &h, &err) == HELM_ERR_CHART_LOAD,
+          "loading a missing chart fails with HELM_ERR_CHART_LOAD");
+    CHECK(h == 0, "no handle issued on failure");
+    helm_free_string(err);
+}
+
+/* Full chart lifecycle against the fixture named by HELMC_TESTCHART. */
+static void test_chart_lifecycle(void) {
+    const char* fixture = getenv("HELMC_TESTCHART");
+    if (fixture == NULL || fixture[0] == '\0') {
+        printf("skip: HELMC_TESTCHART not set — chart lifecycle not exercised\n");
+        return;
+    }
+
+    helm_handle_t h = 0;
+    char* err = NULL;
+    CHECK(helm_chart_load(fixture, &h, &err) == HELM_OK, "fixture chart loads");
+    if (err) { fprintf(stderr, "  load error: %s\n", err); helm_free_string(err); }
+    CHECK(h != 0, "chart handle issued");
+
+    char* meta = NULL;
+    CHECK(helm_chart_metadata(h, &meta, NULL) == HELM_OK, "metadata retrieved");
+    CHECK(meta != NULL && strstr(meta, "testchart") != NULL,
+          "metadata names the fixture chart");
+    helm_free_string(meta);
+
+    char* vals = NULL;
+    CHECK(helm_chart_values(h, &vals, NULL) == HELM_OK, "values retrieved");
+    CHECK(vals != NULL && strstr(vals, "replicaCount") != NULL,
+          "values contain fixture keys");
+    helm_free_string(vals);
+
+    char* lint = NULL;
+    CHECK(helm_lint_run(fixture, NULL, &lint, NULL) == HELM_OK, "lint runs");
+    CHECK(lint != NULL && strstr(lint, "total_charts_linted") != NULL,
+          "lint report is shaped as documented");
+    helm_free_string(lint);
+
+    char* merged = NULL;
+    CHECK(helm_chart_merge_values(h, "{\"replicaCount\":9}", &merged, NULL) == HELM_OK,
+          "values merge succeeds");
+    CHECK(merged != NULL && strstr(merged, "\"replicaCount\":9") != NULL,
+          "override wins in merged values");
+    helm_free_string(merged);
+
+    CHECK(helm_schema_validate(h, NULL, NULL) == HELM_OK,
+          "schema validation passes (chart has no schema)");
+
+    char* manifests = NULL;
+    CHECK(helm_render(h, "{\"replicaCount\":2}", "{\"name\":\"harness-rel\"}",
+                      &manifests, NULL) == HELM_OK,
+          "offline render succeeds");
+    CHECK(manifests != NULL && strstr(manifests, "harness-rel-config") != NULL,
+          "rendered manifest carries the release name");
+    helm_free_string(manifests);
+
+    char* rerr = NULL;
+    CHECK(helm_render(h, NULL, "{\"bogus_key\":true}", &manifests, &rerr)
+              == HELM_ERR_INVALID_ARG,
+          "unknown render option key rejected");
+    helm_free_string(rerr);
+
+    CHECK(helm_chart_free(h, NULL) == HELM_OK, "chart freed");
+    CHECK(helm_chart_free(h, NULL) == HELM_ERR_INVALID_HANDLE,
+          "chart double-free is a defined error");
+
+    char* meta2 = NULL;
+    CHECK(helm_chart_metadata(h, &meta2, NULL) == HELM_ERR_INVALID_HANDLE,
+          "using a freed chart handle is a defined error");
+    helm_free_string(meta2);
+}
+
+static void test_registry_client_lifecycle(void) {
+    helm_handle_t h = 0;
+    CHECK(helm_registry_client_new(NULL, &h, NULL) == HELM_OK,
+          "registry client created with default options");
+    CHECK(h != 0, "registry client handle issued");
+
+    CHECK(helm_chart_free(h, NULL) == HELM_ERR_WRONG_HANDLE_TYPE,
+          "registry client not freeable as a chart");
+    CHECK(helm_registry_client_free(h, NULL) == HELM_OK, "registry client freed");
+    CHECK(helm_registry_client_free(h, NULL) == HELM_ERR_INVALID_HANDLE,
+          "registry client double-free is a defined error");
+
+    char* err = NULL;
+    CHECK(helm_registry_client_new("{\"bad_key\":1}", &h, &err) == HELM_ERR_INVALID_ARG,
+          "unknown registry client option rejected");
+    helm_free_string(err);
+}
+
+static void test_chart_verify(void) {
+    const char* dir = getenv("HELMC_SIGNING_DIR");
+    if (dir == NULL || dir[0] == '\0') {
+        printf("skip: HELMC_SIGNING_DIR not set — provenance verify not exercised\n");
+        return;
+    }
+    char tgz[512], keyring[512];
+    snprintf(tgz, sizeof(tgz), "%s/signtest-0.1.0.tgz", dir);
+    snprintf(keyring, sizeof(keyring), "%s/helm-test-key.pub", dir);
+
+    char* out = NULL;
+    char* err = NULL;
+    CHECK(helm_chart_verify(tgz, NULL, keyring, &out, &err) == HELM_OK,
+          "signed chart verifies");
+    if (err) { fprintf(stderr, "  verify error: %s\n", err); helm_free_string(err); }
+    CHECK(out != NULL && strstr(out, "signed_by") != NULL,
+          "verification report names the signer");
+    helm_free_string(out);
+
+    out = NULL;
+    err = NULL;
+    CHECK(helm_chart_verify("no-such-chart.tgz", NULL, keyring, &out, &err)
+              == HELM_ERR_CHART_INVALID,
+          "verifying a missing chart is a defined error");
+    helm_free_string(out);
+    helm_free_string(err);
+}
+
+static void test_config_and_context(void) {
+    const char* kubeconfig = getenv("HELMC_KUBECONFIG");
+    if (kubeconfig == NULL || kubeconfig[0] == '\0') {
+        printf("skip: HELMC_KUBECONFIG not set — config lifecycle not exercised\n");
+    } else {
+        char opts[512];
+        snprintf(opts, sizeof(opts),
+                 "{\"kubeconfig_path\":\"%s\",\"storage_driver\":\"memory\"}",
+                 kubeconfig);
+
+        helm_handle_t cfg = 0;
+        char* err = NULL;
+        CHECK(helm_config_new(opts, &cfg, &err) == HELM_OK, "config created");
+        if (err) { fprintf(stderr, "  config error: %s\n", err); helm_free_string(err); }
+        CHECK(cfg != 0, "config handle issued");
+
+        /* The fixture kubeconfig points at an unreachable server; actions
+         * check reachability first, so this must fail as a defined error —
+         * never hang or crash. */
+        char* list = NULL;
+        char* lerr = NULL;
+        CHECK(helm_list(cfg, NULL, &list, &lerr) == HELM_ERR_RELEASE,
+              "list against unreachable cluster is a defined error");
+        CHECK(lerr != NULL && strstr(lerr, "unreachable") != NULL,
+              "list error names the unreachable cluster");
+        helm_free_string(list);
+        helm_free_string(lerr);
+
+        CHECK(helm_config_free(cfg, NULL) == HELM_OK, "config freed");
+        CHECK(helm_config_free(cfg, NULL) == HELM_ERR_INVALID_HANDLE,
+              "config double-free is a defined error");
+    }
+
+    helm_handle_t ctx = 0;
+    CHECK(helm_context_new(&ctx, NULL) == HELM_OK, "context created");
+    CHECK(helm_context_cancel(ctx, NULL) == HELM_OK, "context cancelled");
+    CHECK(helm_context_cancel(ctx, NULL) == HELM_OK, "context cancel is repeatable");
+    CHECK(helm_context_free(ctx, NULL) == HELM_OK, "context freed");
+    CHECK(helm_context_free(ctx, NULL) == HELM_ERR_INVALID_HANDLE,
+          "context double-free is a defined error");
+}
+
+static void test_soak(void) {
+    /* Hot loop over the full call surface: any per-call leak shows up under
+     * the leak gate / ASan run. */
+    for (int i = 0; i < 10000; i++) {
+        char* v = helm_c_version();
+        helm_free_string(v);
+        char* err = NULL;
+        helm_release_name_validate("soak-name", &err);
+        helm_free_string(err);
+        helm_handle_free(0, NULL);
+    }
+}
+
+static void test_chart_soak(void) {
+    /* Handle-churn loop: any leaked handle or C string shows up in the leak
+     * gate / ASan run. */
+    const char* fixture = getenv("HELMC_TESTCHART");
+    if (fixture == NULL || fixture[0] == '\0') {
+        return;
+    }
+    for (int i = 0; i < 100; i++) {
+        helm_handle_t h = 0;
+        if (helm_chart_load(fixture, &h, NULL) != HELM_OK) {
+            CHECK(0, "soak: chart load failed");
+            return;
+        }
+        char* meta = NULL;
+        helm_chart_metadata(h, &meta, NULL);
+        helm_free_string(meta);
+        helm_chart_free(h, NULL);
+    }
+}
+
+int main(void) {
+    test_versions();
+    test_string_free_null_safe();
+    test_invalid_handles();
+    test_release_name_validate();
+    test_strvals_parse();
+    test_chart_load_missing();
+    test_chart_lifecycle();
+    test_registry_client_lifecycle();
+    test_chart_verify();
+    test_config_and_context();
+    test_soak();
+    test_chart_soak();
+
+    /* Leak gate: nothing in this harness may leave a live handle behind. */
+    CHECK(helm_open_handles_count() == 0, "leak gate: zero open handles");
+
+    if (failures > 0) {
+        fprintf(stderr, "harness: %d check(s) FAILED\n", failures);
+        return 1;
+    }
+    printf("harness: all checks passed\n");
+    return 0;
+}

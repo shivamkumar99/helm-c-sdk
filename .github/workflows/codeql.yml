@@ -1,0 +1,36 @@
+# CodeQL SAST over both languages of this repo: the Go library and the C
+# header/harness.
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, c-cpp]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+      - name: Build for c-cpp extraction
+        if: matrix.language == 'c-cpp'
+        run: |
+          make build
+          gcc -c -I include test/c-harness/main.c -o /tmp/harness.o
+      - uses: github/codeql-action/analyze@v3

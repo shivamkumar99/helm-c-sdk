@@ -1,0 +1,165 @@
+# CI for helm-c. Assumes this folder is the repository root (see docs/BUILD.md).
+# Every PR must build the shared library, pass -race tests, and run the C
+# harness on Linux, macOS, AND Windows.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install mingw-w64 (Windows)
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+      - name: Format check
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+      - name: Vet
+        run: go vet ./...
+      - name: Unit + boundary tests (-race)
+        run: go test -race ./...
+      - name: Build shared library
+        run: make build
+      - name: E2E C harness
+        if: runner.os != 'Windows'
+        run: make harness
+      - name: E2E C harness (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          make build
+          gcc -Wall -Wextra -Werror -o build/harness.exe test/c-harness/main.c \
+            -I include -L build -lhelm_c
+          HELMC_TESTCHART=testdata/testchart PATH="$PWD/build:$PATH" ./build/harness.exe
+      - name: Upload library artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-c-${{ matrix.os }}
+          path: |
+            build/libhelm_c.*
+            build/helm_c.dll
+            include/helm_c.h
+          if-no-files-found: error
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v6
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gosec (SAST)
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec ./...
+      - name: govulncheck (known vulns in deps)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  build-test-windows-llvm:
+    # Second Windows toolchain: llvm-mingw (clang targeting mingw-w64), so a
+    # regression against either supported toolchain is caught. The MSYS2
+    # mingw-w64 gcc build runs in the main matrix.
+    runs-on: windows-latest
+    env:
+      # Pinned llvm-mingw release tag (https://github.com/mstorsjo/llvm-mingw);
+      # bump deliberately.
+      LLVM_MINGW_VERSION: "20250613"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install llvm-mingw
+        shell: bash
+        run: |
+          curl -sSL -o llvm-mingw.zip \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-x86_64.zip"
+          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
+          echo "$RUNNER_TEMP/llvm-mingw/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-x86_64/bin" >> "$GITHUB_PATH"
+      - name: Vet + test (cgo via clang)
+        shell: bash
+        env:
+          CC: x86_64-w64-mingw32-clang
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build library + harness (clang)
+        shell: bash
+        env:
+          CC: x86_64-w64-mingw32-clang
+        run: |
+          make build
+          x86_64-w64-mingw32-clang -Wall -Wextra -Werror -o build/harness.exe \
+            test/c-harness/main.c -I include -L build -lhelm_c
+          HELMC_TESTCHART=testdata/testchart \
+          HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
+          HELMC_SIGNING_DIR=testdata/signing \
+          PATH="$PWD/build:$PATH" ./build/harness.exe
+
+  kind-e2e:
+    # Real-cluster end-to-end: install/upgrade/rollback/uninstall against a
+    # kind cluster (local tests use the memory driver + fake kube clients).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: helm/kind-action@v1
+      - name: Cluster lifecycle e2e
+        run: go test -tags kind -race ./internal/wrapper -run TestKind -v
+
+  fuzz:
+    # Short fuzz pass per PR on the untrusted-input parsers; longer runs can be
+    # scheduled once a corpus accumulates.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz strvals parser
+        run: go test ./internal/wrapper -run '^$' -fuzz FuzzParseSetString -fuzztime 30s
+      - name: Fuzz chart archive loader
+        run: go test ./internal/wrapper -run '^$' -fuzz FuzzLoadArchive -fuzztime 30s
+      - name: Fuzz values round-trip
+        run: go test ./internal/wrapper -run '^$' -fuzz FuzzValuesRoundTrip -fuzztime 30s
+
+  leak-check:
+    # DAST-equivalent for a native library: the e2e harness under ASan/LSan
+    # catches leaks, double-frees, and use-after-free across the FFI seam.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Harness under AddressSanitizer + LeakSanitizer
+        run: make leak-check

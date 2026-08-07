@@ -1,13 +1,25 @@
-# Builds and attaches prebuilt libraries for every tagged release.
-# Assumes helm-c is the repository root (see docs/BUILD.md).
+# Release pipeline. Two triggers:
+#   - pushing a tag v* releases that tag;
+#   - workflow_dispatch releases ANY branch: pick the branch in the Actions UI,
+#     supply a version — the release (and tag) is created from that ref.
+# Pipeline: build (3 OS) → virus scan + checksums → publish. Binaries are only
+# attached to a release after ClamAV passes over every artifact.
 name: Release
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.2.0-rc.1); the tag is created from the selected branch"
+        required: true
 
 permissions:
   contents: write
+
+env:
+  REL_VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
 
 jobs:
   build:
@@ -39,16 +51,73 @@ jobs:
         run: make build
       - name: Generate pkg-config file
         shell: bash
-        run: make pkgconfig VERSION=${GITHUB_REF_NAME#v}
+        run: make pkgconfig VERSION=${REL_VERSION#v}
       - name: Package
         shell: bash
         run: |
           mkdir -p dist/helm-c-${{ matrix.platform }}
           cp build/${{ matrix.artifact }} include/helm_c.h build/helm_c.pc \
-             docs/API.md docs/MEMORY.md dist/helm-c-${{ matrix.platform }}/
-          tar -C dist -czf dist/helm-c-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz \
+             docs/API.md docs/MEMORY.md LICENSE NOTICE dist/helm-c-${{ matrix.platform }}/
+          tar -C dist -czf "dist/helm-c-${REL_VERSION}-${{ matrix.platform }}.tar.gz" \
              helm-c-${{ matrix.platform }}
-      - name: Attach to release
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: dist/helm-c-*.tar.gz
+          if-no-files-found: error
+
+  scan:
+    # Malware scan of every release binary BEFORE anything is published.
+    # A ClamAV finding fails the pipeline and nothing gets attached.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+      - name: Install ClamAV and refresh signatures
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q clamav
+          sudo systemctl stop clamav-freshclam 2>/dev/null || true
+          sudo freshclam --quiet || sudo freshclam
+      - name: Scan release artifacts (archives + extracted contents)
+        run: |
+          mkdir -p extracted scan
+          for t in dist/*.tar.gz; do tar -xzf "$t" -C extracted; done
+          clamscan -r --infected dist/ extracted/ | tee scan/clamav.txt
+      - name: Generate SHA-256 checksums
+        run: |
+          cd dist && sha256sum *.tar.gz > sha256sums.txt && cat sha256sums.txt
+      - name: Upload scanned artifacts + checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-scanned
+          path: |
+            dist/*.tar.gz
+            dist/sha256sums.txt
+            scan/clamav.txt
+          if-no-files-found: error
+
+  publish:
+    # Only runs when the scan job passed.
+    needs: scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-scanned
+          path: release
+      - name: Create release with binaries
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/helm-c-*.tar.gz
+          tag_name: ${{ env.REL_VERSION }}
+          target_commitish: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
+          generate_release_notes: true
+          files: |
+            release/dist/*.tar.gz
+            release/dist/sha256sums.txt
+            release/scan/clamav.txt

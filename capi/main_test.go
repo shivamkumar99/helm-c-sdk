@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/shivamkumar99/helm-c-sdk/internal/testfixtures"
@@ -13,6 +14,7 @@ var (
 	fixtureChart      string
 	fixtureSchema     string
 	fixtureKubeconfig string
+	fixtureSigning    string
 )
 
 func TestMain(m *testing.M) {
@@ -27,6 +29,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	if fixtureKubeconfig, err = testfixtures.WriteKubeconfig(dir); err != nil {
+		panic(err)
+	}
+	fixtureSigning = filepath.Join(dir, "signing")
+	if err = testfixtures.GenerateSigning(fixtureSigning); err != nil {
 		panic(err)
 	}
 

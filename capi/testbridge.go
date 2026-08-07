@@ -219,3 +219,225 @@ func testPanicGuard() (int32, string) {
 	}()
 	return int32(code), takeDetail(errOut)
 }
+
+// --- bridges for the remaining shims (every //export gets boundary tests) ---
+
+func bridgeOut2(code C.int32_t, out, errOut *C.char) (int32, string, string) {
+	return int32(code), takeDetail(out), takeDetail(errOut)
+}
+
+func testChartValues(h uint64) (int32, string, string) {
+	var out, errOut *C.char
+	code := helm_chart_values(C.uint64_t(h), &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testChartSave(h uint64, dir string) (int32, string, string) {
+	cDir := C.CString(dir)
+	defer freeCString(cDir)
+	var out, errOut *C.char
+	code := helm_chart_save(C.uint64_t(h), cDir, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testChartCreate(name, dir string) (int32, string, string) {
+	cName, cDir := C.CString(name), C.CString(dir)
+	defer freeCString(cName)
+	defer freeCString(cDir)
+	var out, errOut *C.char
+	code := helm_chart_create(cName, cDir, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testLintRun(path string, valuesJSON *string) (int32, string, string) {
+	cPath := C.CString(path)
+	defer freeCString(cPath)
+	cVals, cleanup := optionalCString(valuesJSON)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_lint_run(cPath, cVals, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testPackageRun(path string, optsJSON *string) (int32, string, string) {
+	cPath := C.CString(path)
+	defer freeCString(cPath)
+	cOpts, cleanup := optionalCString(optsJSON)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_package_run(cPath, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testChartVerify(path string, prov *string, keyring string) (int32, string, string) {
+	cPath, cKeyring := C.CString(path), C.CString(keyring)
+	defer freeCString(cPath)
+	defer freeCString(cKeyring)
+	cProv, cleanup := optionalCString(prov)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_chart_verify(cPath, cProv, cKeyring, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testOpenHandlesCount() int64 { return int64(helm_open_handles_count()) }
+
+func testInstall(cfgH, ctxH, chartH uint64, chartRef *string, name string, vals, opts *string) (int32, string, string) {
+	cRef, c1 := optionalCString(chartRef)
+	defer c1()
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cVals, c2 := optionalCString(vals)
+	defer c2()
+	cOpts, c3 := optionalCString(opts)
+	defer c3()
+	var out, errOut *C.char
+	code := helm_install(C.uint64_t(cfgH), C.uint64_t(ctxH), C.uint64_t(chartH), cRef, cName, cVals, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testUpgrade(cfgH, ctxH, chartH uint64, chartRef *string, name string, vals, opts *string) (int32, string, string) {
+	cRef, c1 := optionalCString(chartRef)
+	defer c1()
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cVals, c2 := optionalCString(vals)
+	defer c2()
+	cOpts, c3 := optionalCString(opts)
+	defer c3()
+	var out, errOut *C.char
+	code := helm_upgrade(C.uint64_t(cfgH), C.uint64_t(ctxH), C.uint64_t(chartH), cRef, cName, cVals, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+// nameAction bridges the cfg+name → out shims.
+func testUninstall(cfgH uint64, name string, opts *string) (int32, string, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_uninstall(C.uint64_t(cfgH), cName, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testRollback(cfgH uint64, name string, opts *string) (int32, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var errOut *C.char
+	code := helm_rollback(C.uint64_t(cfgH), cName, cOpts, &errOut)
+	return int32(code), takeDetail(errOut)
+}
+
+func testStatus(cfgH uint64, name string, opts *string) (int32, string, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_status(C.uint64_t(cfgH), cName, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testHistory(cfgH uint64, name string, opts *string) (int32, string, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_history(C.uint64_t(cfgH), cName, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testGetValues(cfgH uint64, name string, opts *string) (int32, string, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_get_values(C.uint64_t(cfgH), cName, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testGetMetadata(cfgH uint64, name string, opts *string) (int32, string, string) {
+	cName := C.CString(name)
+	defer freeCString(cName)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_get_metadata(C.uint64_t(cfgH), cName, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testPull(clientH uint64, ref string, opts *string) (int32, string, string) {
+	cRef := C.CString(ref)
+	defer freeCString(cRef)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_pull(C.uint64_t(clientH), cRef, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testPush(clientH uint64, path, remote string, opts *string) (int32, string, string) {
+	cPath, cRemote := C.CString(path), C.CString(remote)
+	defer freeCString(cPath)
+	defer freeCString(cRemote)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_push(C.uint64_t(clientH), cPath, cRemote, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testRegistryLogin(h uint64, host, user, pass string, opts *string) (int32, string) {
+	cHost, cUser, cPass := C.CString(host), C.CString(user), C.CString(pass)
+	defer freeCString(cHost)
+	defer freeCString(cUser)
+	defer freeCString(cPass)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var errOut *C.char
+	code := helm_registry_login(C.uint64_t(h), cHost, cUser, cPass, cOpts, &errOut)
+	return int32(code), takeDetail(errOut)
+}
+
+func testRegistryLogout(h uint64, host string) (int32, string) {
+	cHost := C.CString(host)
+	defer freeCString(cHost)
+	var errOut *C.char
+	code := helm_registry_logout(C.uint64_t(h), cHost, &errOut)
+	return int32(code), takeDetail(errOut)
+}
+
+func testRepoIndexDownload(url string, opts *string) (int32, string, string) {
+	cURL := C.CString(url)
+	defer freeCString(cURL)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var out, errOut *C.char
+	code := helm_repo_index_download(cURL, cOpts, &out, &errOut)
+	return bridgeOut2(code, out, errOut)
+}
+
+func testDependencyUpdate(dir string, opts *string) (int32, string) {
+	cDir := C.CString(dir)
+	defer freeCString(cDir)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var errOut *C.char
+	code := helm_dependency_update(cDir, cOpts, &errOut)
+	return int32(code), takeDetail(errOut)
+}
+
+func testDependencyBuild(dir string, opts *string) (int32, string) {
+	cDir := C.CString(dir)
+	defer freeCString(cDir)
+	cOpts, cleanup := optionalCString(opts)
+	defer cleanup()
+	var errOut *C.char
+	code := helm_dependency_build(cDir, cOpts, &errOut)
+	return int32(code), takeDetail(errOut)
+}

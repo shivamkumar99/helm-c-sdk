@@ -76,13 +76,13 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload test & coverage reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-${{ matrix.os }}
           path: reports/
           retention-days: 30
       - name: Upload library artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: helm-c-${{ matrix.os }}
           path: |
@@ -136,7 +136,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-windows-llvm
           path: reports/
@@ -191,7 +191,7 @@ jobs:
         # finding details are only stored while the repo is private; on a
         # public repo they live solely in the maintainer-only Security tab.
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-sast
           path: reports/
@@ -227,7 +227,7 @@ jobs:
           category: codacy
       - name: Upload Codacy report artifact (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-codacy
           path: codacy.sarif
@@ -268,7 +268,7 @@ jobs:
             || osv-scanner -r . > reports/osv-scanner.txt 2>&1
       - name: Upload osv report (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-osv
           path: reports/
@@ -305,7 +305,7 @@ jobs:
             > reports/trufflehog.txt 2>&1
       - name: Upload secrets report (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-secrets
           path: reports/
@@ -379,7 +379,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload e2e report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-kind-e2e
           path: reports/
@@ -405,7 +405,7 @@ jobs:
           done
       - name: Upload fuzz report (+ any failing inputs)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-fuzz
           path: |
@@ -430,7 +430,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload sanitizer report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: reports-leak-check
           path: reports/

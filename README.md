@@ -1,5 +1,13 @@
 # helm-c-sdk — C SDK for Helm
 
+[![CI](https://github.com/shivamkumar99/helm-c-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/shivamkumar99/helm-c-sdk/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/shivamkumar99/helm-c-sdk/actions/workflows/codeql.yml/badge.svg)](https://github.com/shivamkumar99/helm-c-sdk/actions/workflows/codeql.yml)
+[![License: Apache-2.0](https://img.shields.io/github/license/shivamkumar99/helm-c-sdk)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/shivamkumar99/helm-c-sdk)](go.mod)
+[![Helm SDK](https://img.shields.io/badge/Helm%20SDK-v4.2.3-0F1689?logo=helm)](https://github.com/helm/helm)
+[![Release](https://img.shields.io/github/v/release/shivamkumar99/helm-c-sdk?include_prereleases)](https://github.com/shivamkumar99/helm-c-sdk/releases)
+[![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational)](docs/BUILD.md)
+
 **C bindings for the [Helm](https://helm.sh) v4 Go SDK**: a shared library
 (`libhelm_c.so` / `libhelm_c.dylib` / `helm_c.dll`) with a small, stable C API, so you can
 **use Helm from Node.js, Python, Swift, Rust, C/C++, or any language with FFI** — install,
@@ -79,8 +87,33 @@ helm_install(cfg, 0, chart, NULL, "demo", "{\"replicaCount\":3}", NULL, &release
 - [docs/adr/](docs/adr) — design decisions (handle registry, JSON boundary, error model,
   SDK pinning)
 
+## Docker
+
+A hardened multi-stage [Dockerfile](Dockerfile) builds the library, gates the image on
+the test suite + C harness, and produces a minimal distroless image running as non-root:
+
+```bash
+docker build -t helm-c-sdk .
+docker run --rm helm-c-sdk          # runs the library self-check
+
+# use it as an artifact image — extract the built .so and header:
+docker create --name hc helm-c-sdk
+docker cp hc:/usr/local/lib/libhelm_c.so .
+docker cp hc:/usr/local/include/helm_c.h .
+docker rm hc
+```
+
 ## Scope
 
 This repository ships the **C library, header, and docs only**. Language bindings
 (Node.js N-API, Python, Swift, …) are intended to live in their own repositories on top
 of this ABI — the API is deliberately shaped so those wrappers stay thin.
+
+## License
+
+[Apache License 2.0](LICENSE) — free for commercial and private use, modification, and
+redistribution. Redistributions must retain the copyright notice, the [NOTICE](NOTICE)
+attribution, and state significant changes (Apache-2.0 §4), so authorship credit is
+preserved.
+
+Copyright 2026 Shivam Kumar.

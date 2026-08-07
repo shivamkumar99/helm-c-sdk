@@ -3,7 +3,9 @@ CC      ?= cc
 BUILD   := build
 
 ifeq ($(OS),Windows_NT)
-  LIB      := helm_c.dll
+  # Same basename on every OS (libhelm_c.<ext>) so bindings only swap the
+  # extension; mingw resolves -lhelm_c against libhelm_c.dll natively.
+  LIB      := libhelm_c.dll
   HARNESS  := harness.exe
 else
   UNAME_S := $(shell uname -s)

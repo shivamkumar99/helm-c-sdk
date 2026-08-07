@@ -22,7 +22,7 @@ jobs:
             artifact: libhelm_c.dylib
             platform: darwin-arm64
           - os: windows-latest
-            artifact: helm_c.dll
+            artifact: libhelm_c.dll
             platform: windows-amd64
     runs-on: ${{ matrix.os }}
     steps:

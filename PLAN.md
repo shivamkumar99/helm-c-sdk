@@ -194,7 +194,7 @@ green on 3 OSes → then next phase. A phase is never left half-documented.
 ## 5. Build & CI
 
 - **Build:** `go build -buildmode=c-shared -o build/<lib>` per OS
-  (`libhelm_c.so` / `libhelm_c.dylib` / `helm_c.dll`); ship our hand-written `include/helm_c.h`
+  (`libhelm_c.so` / `libhelm_c.dylib` / `libhelm_c.dll`); ship our hand-written `include/helm_c.h`
   (the cgo-generated header is an internal artifact — ours is the stable, documented one).
 - **CI (GitHub Actions), every PR:**
   - matrix `{ubuntu-latest, macos-latest, windows-latest}`: setup Go, (Windows: mingw-w64 via

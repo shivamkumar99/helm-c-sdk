@@ -15,7 +15,7 @@
 make build       # shared library + cgo header into build/
                  #   linux:   build/libhelm_c.so
                  #   macOS:   build/libhelm_c.dylib
-                 #   windows: build/helm_c.dll
+                 #   windows: build/libhelm_c.dll
 make test        # go vet + go test -race ./...
 make harness     # build & run the e2e C harness against the built library
 make leak-check  # (linux) harness under AddressSanitizer/LeakSanitizer

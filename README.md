@@ -9,7 +9,7 @@
 [![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-informational)](docs/BUILD.md)
 
 **C bindings for the [Helm](https://helm.sh) v4 Go SDK**: a shared library
-(`libhelm_c.so` / `libhelm_c.dylib` / `helm_c.dll`) with a small, stable C API, so you can
+(`libhelm_c.so` / `libhelm_c.dylib` / `libhelm_c.dll`) with a small, stable C API, so you can
 **use Helm from Node.js, Python, Swift, Rust, C/C++, or any language with FFI** — install,
 upgrade, and roll back releases, render and package charts, and talk to OCI registries,
 without shelling out to the `helm` binary.
@@ -38,7 +38,7 @@ verify at runtime with `helm_sdk_version()`.
 ## Quick start
 
 ```bash
-make build    # -> build/libhelm_c.{so,dylib} or helm_c.dll + include/helm_c.h
+make build    # -> build/libhelm_c.{so,dylib,dll} + include/helm_c.h
 ```
 
 ```c

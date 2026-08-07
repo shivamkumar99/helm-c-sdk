@@ -12,10 +12,15 @@
 ## Commands
 
 ```bash
-make build       # shared library + cgo header into build/
-                 #   linux:   build/libhelm_c.so
-                 #   macOS:   build/libhelm_c.dylib
-                 #   windows: build/libhelm_c.dll
+make build       # versioned shared library into build/ (VERSION=x.y.z, default 0.1.0)
+                 #   linux:   libhelm_c.so.<version>  (SONAME libhelm_c.so.<major>)
+                 #            + symlinks libhelm_c.so.<major>, libhelm_c.so
+                 #   macOS:   libhelm_c.<version>.dylib (install_name
+                 #            @rpath/libhelm_c.<major>.dylib, current_version set)
+                 #            + symlinks libhelm_c.<major>.dylib, libhelm_c.dylib
+                 #   windows: libhelm_c-<version>.dll + unversioned libhelm_c.dll copy
+                 # Multiple versions install side by side; link with -lhelm_c via
+                 # the unversioned name, load at runtime via the major-versioned one.
 make test        # go vet + go test -race ./...
 make harness     # build & run the e2e C harness against the built library
 make leak-check  # (linux) harness under AddressSanitizer/LeakSanitizer
@@ -24,7 +29,7 @@ make clean
 ```
 
 The **public** header is `include/helm_c.h` (hand-maintained, documented, stable). The
-cgo-generated `build/libhelm_c.h` is an internal artifact — do not ship or include it.
+cgo-generated header is an internal artifact and is deleted automatically by `make build`.
 
 ## Consuming the library
 

@@ -86,7 +86,9 @@ jobs:
         with:
           name: helm-c-${{ matrix.os }}
           path: |
-            build/libhelm_c.*
+            build/libhelm_c.so.*
+            build/libhelm_c.*.dylib
+            build/libhelm_c-*.dll
             include/helm_c.h
           if-no-files-found: error
 

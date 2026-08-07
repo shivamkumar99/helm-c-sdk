@@ -38,7 +38,8 @@ verify at runtime with `helm_sdk_version()`.
 ## Quick start
 
 ```bash
-make build    # -> build/libhelm_c.{so,dylib,dll} + include/helm_c.h
+make build    # -> build/libhelm_c.so.<v> / libhelm_c.<v>.dylib / libhelm_c-<v>.dll
+              #    (+ unversioned symlinks for linking) + include/helm_c.h
 ```
 
 ```c

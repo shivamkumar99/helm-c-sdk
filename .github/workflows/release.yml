@@ -28,13 +28,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact: libhelm_c.so
             platform: linux-amd64
           - os: macos-latest
-            artifact: libhelm_c.dylib
             platform: darwin-arm64
           - os: windows-latest
-            artifact: libhelm_c.dll
             platform: windows-amd64
     runs-on: ${{ matrix.os }}
     steps:
@@ -47,8 +44,9 @@ jobs:
         run: choco install mingw -y
       - name: Test
         run: go test -race ./...
-      - name: Build
-        run: make build
+      - name: Build (versioned library)
+        shell: bash
+        run: make build VERSION=${REL_VERSION#v}
       - name: Generate pkg-config file
         shell: bash
         run: make pkgconfig VERSION=${REL_VERSION#v}
@@ -56,7 +54,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist/helm-c-${{ matrix.platform }}
-          cp build/${{ matrix.artifact }} include/helm_c.h build/helm_c.pc \
+          # -a preserves the soname symlink chain (Linux/macOS); Windows ships
+          # the versioned DLL plus the unversioned linking copy.
+          cp -a build/libhelm_c* dist/helm-c-${{ matrix.platform }}/
+          cp include/helm_c.h build/helm_c.pc \
              docs/API.md docs/MEMORY.md LICENSE NOTICE dist/helm-c-${{ matrix.platform }}/
           tar -C dist -czf "dist/helm-c-${REL_VERSION}-${{ matrix.platform }}.tar.gz" \
              helm-c-${{ matrix.platform }}

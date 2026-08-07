@@ -2,17 +2,30 @@ GO      ?= go
 CC      ?= cc
 BUILD   := build
 
+# Library version — baked into filenames and linker metadata so multiple
+# versions can coexist side by side. MAJOR bumps on ABI breaks (which the
+# append-only rule forbids within a major).
+VERSION ?= 0.1.0
+MAJOR   := $(word 1,$(subst ., ,$(VERSION)))
+
 ifeq ($(OS),Windows_NT)
-  # Same basename on every OS (libhelm_c.<ext>) so bindings only swap the
-  # extension; mingw resolves -lhelm_c against libhelm_c.dll natively.
-  LIB      := libhelm_c.dll
+  # Windows has no soname mechanism: the version rides the filename
+  # (libhelm_c-0.1.0.dll), with an unversioned copy for -lhelm_c linking.
+  LIB      := libhelm_c-$(VERSION).dll
+  SOFLAGS  :=
   HARNESS  := harness.exe
 else
   UNAME_S := $(shell uname -s)
   ifeq ($(UNAME_S),Darwin)
-    LIB    := libhelm_c.dylib
+    # macOS: versioned dylib + install_name/current_version metadata;
+    # libhelm_c.$(MAJOR).dylib and libhelm_c.dylib symlinks alongside.
+    LIB     := libhelm_c.$(VERSION).dylib
+    SOFLAGS := -extldflags=-Wl,-install_name,@rpath/libhelm_c.$(MAJOR).dylib,-current_version,$(VERSION),-compatibility_version,$(MAJOR).0
   else
-    LIB    := libhelm_c.so
+    # Linux: classic soname scheme — libhelm_c.so.$(VERSION) with
+    # SONAME libhelm_c.so.$(MAJOR), plus the usual symlink chain.
+    LIB     := libhelm_c.so.$(VERSION)
+    SOFLAGS := -extldflags=-Wl,-soname,libhelm_c.so.$(MAJOR)
   endif
   HARNESS  := harness
 endif
@@ -22,7 +35,17 @@ endif
 all: build
 
 build:
-	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -o $(BUILD)/$(LIB) ./capi
+	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -ldflags "$(SOFLAGS)" -o $(BUILD)/$(LIB) ./capi
+	@rm -f $(BUILD)/*.h  # cgo-generated header; include/helm_c.h is the shipped one
+ifeq ($(OS),Windows_NT)
+	cp $(BUILD)/$(LIB) $(BUILD)/libhelm_c.dll
+else ifeq ($(UNAME_S),Darwin)
+	ln -sf $(LIB) $(BUILD)/libhelm_c.$(MAJOR).dylib
+	ln -sf $(LIB) $(BUILD)/libhelm_c.dylib
+else
+	ln -sf $(LIB) $(BUILD)/libhelm_c.so.$(MAJOR)
+	ln -sf $(LIB) $(BUILD)/libhelm_c.so
+endif
 
 vet:
 	$(GO) vet ./...

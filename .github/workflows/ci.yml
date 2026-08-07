@@ -39,11 +39,18 @@ jobs:
           mkdir -p reports
           go test -race -v ./... 2>&1 | tee reports/test-results.txt
           test "${PIPESTATUS[0]}" -eq 0
-      - name: Coverage report
+      - name: Coverage report + floor gate
         shell: bash
         run: |
           go test -coverprofile=reports/coverage.out ./internal/... ./capi/...
           go tool cover -func=reports/coverage.out | tee reports/coverage-summary.txt
+          # Gate: >=80% across internal/ (the logic layer). capi shims are
+          # exercised through the C harness, which Go coverage cannot count,
+          # so they are reported above but not gated.
+          go test -coverprofile=reports/coverage-internal.out ./internal/...
+          total=$(go tool cover -func=reports/coverage-internal.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "internal/ coverage: ${total}% (floor: 80%)" | tee -a reports/coverage-summary.txt
+          awk -v t="$total" 'BEGIN { exit (t+0 < 80.0) ? 1 : 0 }'
       - name: Build shared library
         run: make build
       - name: E2E C harness
@@ -58,7 +65,7 @@ jobs:
             -I include -L build -lhelm_c
           HELMC_TESTCHART=testdata/testchart \
           HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
-          HELMC_SIGNING_DIR=testdata/signing \
+          HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$(mktemp -d) \
           PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness.txt
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload test & coverage reports
@@ -117,7 +124,7 @@ jobs:
             test/c-harness/main.c -I include -L build -lhelm_c
           HELMC_TESTCHART=testdata/testchart \
           HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
-          HELMC_SIGNING_DIR=testdata/signing \
+          HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$(mktemp -d) \
           PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness-llvm.txt
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload reports
@@ -150,28 +157,33 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: gosec (SARIF + text report)
+      # Finding details go to FILES only, never stdout: on a public repo the
+      # job log is world-readable, and a vulnerability list is a roadmap for
+      # attackers. The log carries pass/fail only.
+      - name: gosec (SARIF + text report, findings to file)
         shell: bash
         run: |
           mkdir -p reports
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -fmt sarif -out reports/gosec.sarif ./... || true
-          gosec -fmt text ./... 2>&1 | tee reports/gosec.txt
-          test "${PIPESTATUS[0]}" -eq 0
-      - name: Upload gosec SARIF to Security tab
+          gosec -quiet -fmt sarif -out reports/gosec.sarif ./... || true
+          gosec -quiet -fmt text -out reports/gosec.txt ./...
+      - name: Upload gosec SARIF to Security tab (maintainer-only view)
         if: always()
+        continue-on-error: true # needs a public repo or Advanced Security
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: reports/gosec.sarif
           category: gosec
-      - name: govulncheck (report)
+      - name: govulncheck (findings to file)
         shell: bash
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... 2>&1 | tee reports/govulncheck.txt
-          test "${PIPESTATUS[0]}" -eq 0
-      - name: Upload SAST reports
-        if: always()
+          govulncheck ./... > reports/govulncheck.txt 2>&1
+      - name: Upload SAST reports (private repo only)
+        # Run artifacts are downloadable by anyone who can view the repo, so
+        # finding details are only stored while the repo is private; on a
+        # public repo they live solely in the maintainer-only Security tab.
+        if: always() && github.event.repository.private
         uses: actions/upload-artifact@v4
         with:
           name: reports-sast
@@ -206,8 +218,8 @@ jobs:
         with:
           sarif_file: codacy.sarif
           category: codacy
-      - name: Upload Codacy report artifact
-        if: always()
+      - name: Upload Codacy report artifact (private repo only)
+        if: always() && github.event.repository.private
         uses: actions/upload-artifact@v4
         with:
           name: reports-codacy
@@ -239,22 +251,60 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: gitleaks (full history)
+      - name: gitleaks (full history, redacted, findings to file)
         shell: bash
         run: |
           mkdir -p reports
           curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
             | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks git . --report-format sarif --report-path reports/gitleaks.sarif \
-            2>&1 | tee reports/gitleaks.txt
-          test "${PIPESTATUS[0]}" -eq 0
-      - name: Upload secrets report
-        if: always()
+          # --redact so a discovered secret value never appears in any report;
+          # output to file so the (potentially public) job log stays clean.
+          /tmp/gitleaks git . --redact --report-format sarif \
+            --report-path reports/gitleaks.sarif > reports/gitleaks.txt 2>&1
+      - name: Upload secrets report (private repo only)
+        if: always() && github.event.repository.private
         uses: actions/upload-artifact@v4
         with:
           name: reports-secrets
           path: reports/
           retention-days: 30
+
+  docker:
+    # Builds the hardened multi-stage image per PR — its internal test-gate
+    # stage must pass or the build fails — then smoke-runs it. On pushes to
+    # main the image is published to GHCR (package visibility follows the
+    # repo's visibility).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (runs in-image test gate)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: helm-c-sdk:ci
+      - name: Smoke-run image
+        run: docker run --rm helm-c-sdk:ci
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
 
   kind-e2e:
     # Real-cluster end-to-end: install/upgrade/rollback/uninstall against a

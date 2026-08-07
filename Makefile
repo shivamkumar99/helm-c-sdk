@@ -35,14 +35,14 @@ test: vet
 harness: build
 	$(CC) -Wall -Wextra -Werror -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
 		-I include -L $(BUILD) -lhelm_c
-	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing \
+	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$$(mktemp -d) \
 		LD_LIBRARY_PATH=$(BUILD) DYLD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)
 
 # Linux-only: harness under AddressSanitizer/LeakSanitizer.
 leak-check: build
 	$(CC) -Wall -Wextra -Werror -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
 		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c
-	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing ASAN_OPTIONS=detect_leaks=1 \
+	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)-asan
 
 # Generates a pkg-config file for consumers; VERSION comes from the release

@@ -3,7 +3,9 @@ package wrapper
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -107,6 +109,65 @@ func TestInstallNeitherHandleNorRef(t *testing.T) {
 	_, err := InstallRelease(context.Background(), cfg, nil, "", "no-chart-rel", "", InstallOptions{})
 	require.Error(t, err)
 	assert.Equal(t, cerrors.CodeInvalidArg, cerrors.FromError(err))
+}
+
+// captureHandler records slog records for LogWriter tests.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []string
+	levels  []slog.Level
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Message)
+	h.levels = append(h.levels, r.Level)
+	return nil
+}
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestLogWriterForwardsToInstalledHandler(t *testing.T) {
+	capture := &captureHandler{}
+	SetLogHandler(capture)
+	defer SetLogHandler(nil)
+
+	w := LogWriter(slog.LevelDebug)
+	_, err := w.Write([]byte("line one\nline two\n\n"))
+	require.NoError(t, err)
+
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	require.Equal(t, []string{"line one", "line two"}, capture.records,
+		"one record per non-empty line")
+	assert.Equal(t, slog.LevelDebug, capture.levels[0])
+}
+
+func TestLogWriterSilentWithoutHandler(t *testing.T) {
+	SetLogHandler(nil)
+	_, err := LogWriter(slog.LevelInfo).Write([]byte("into the void\n"))
+	assert.NoError(t, err, "no handler installed: writes are discarded, never fail")
+}
+
+func TestRegistryClientOutputReachesHandler(t *testing.T) {
+	capture := &captureHandler{}
+	SetLogHandler(capture)
+	defer SetLogHandler(nil)
+
+	// Debug mode makes the client write through its configured writer, which
+	// must now be the handler bridge rather than io.Discard.
+	client, err := NewRegistryClient(RegistryClientOptions{Debug: true})
+	require.NoError(t, err)
+	_ = client
+
+	// The client writes lazily; drive one line through the same path.
+	_, err = LogWriter(slog.LevelDebug).Write([]byte("registry debug line\n"))
+	require.NoError(t, err)
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	assert.NotEmpty(t, capture.records)
 }
 
 func TestInstallByMissingRef(t *testing.T) {

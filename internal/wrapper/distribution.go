@@ -1,7 +1,7 @@
 package wrapper
 
 import (
-	"io"
+	"log/slog"
 
 	"helm.sh/helm/v4/pkg/action"
 	"helm.sh/helm/v4/pkg/cli"
@@ -98,7 +98,7 @@ func PushChart(clientObj any, chartPath, remote string, opts PushOptions) (strin
 		action.WithPushConfig(cfg),
 		action.WithPlainHTTP(opts.PlainHTTP),
 		action.WithInsecureSkipTLSVerify(opts.InsecureSkipTLSVerify),
-		action.WithPushOptWriter(io.Discard),
+		action.WithPushOptWriter(LogWriter(slog.LevelInfo)),
 	)
 	p.Settings = cli.New()
 

@@ -2,7 +2,7 @@ package wrapper
 
 import (
 	"fmt"
-	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -80,7 +80,7 @@ func dependencyManager(chartDir string, opts DependencyOptions) (*downloader.Man
 	}
 
 	m := &downloader.Manager{
-		Out:              io.Discard,
+		Out:              LogWriter(slog.LevelInfo),
 		ChartPath:        chartDir,
 		Getters:          getter.All(cli.New()),
 		RegistryClient:   client,

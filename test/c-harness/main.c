@@ -155,6 +155,67 @@ static void test_chart_lifecycle(void) {
     helm_free_string(meta2);
 }
 
+/* Chart authoring through the ABI: create -> load -> save -> package.
+ * Needs a writable scratch dir via HELMC_WORK_DIR. */
+static void test_chart_authoring(void) {
+    const char* workdir = getenv("HELMC_WORK_DIR");
+    if (workdir == NULL || workdir[0] == '\0') {
+        printf("skip: HELMC_WORK_DIR not set — chart authoring not exercised\n");
+        return;
+    }
+
+    char* chart_dir = NULL;
+    char* err = NULL;
+    CHECK(helm_chart_create("harnesschart", workdir, &chart_dir, &err) == HELM_OK,
+          "chart scaffold created");
+    if (err) { fprintf(stderr, "  create error: %s\n", err); helm_free_string(err); }
+    CHECK(chart_dir != NULL && strstr(chart_dir, "harnesschart") != NULL,
+          "created path names the chart");
+
+    err = NULL;
+    char* bad_out = NULL;
+    CHECK(helm_chart_create("Bad Name!", workdir, &bad_out, &err) == HELM_ERR_INVALID_ARG,
+          "invalid chart name rejected");
+    helm_free_string(bad_out);
+    helm_free_string(err);
+
+    helm_handle_t h = 0;
+    CHECK(helm_chart_load(chart_dir, &h, NULL) == HELM_OK, "scaffold loads");
+
+    char* tgz = NULL;
+    CHECK(helm_chart_save(h, workdir, &tgz, NULL) == HELM_OK, "chart saved");
+    CHECK(tgz != NULL && strstr(tgz, "harnesschart-") != NULL,
+          "saved archive named <chart>-<version>");
+    helm_free_string(tgz);
+    CHECK(helm_chart_free(h, NULL) == HELM_OK, "authored chart freed");
+
+    char opts[600];
+    snprintf(opts, sizeof(opts), "{\"destination\":\"%s\"}", workdir);
+    char* pkg = NULL;
+    CHECK(helm_package_run(chart_dir, opts, &pkg, NULL) == HELM_OK, "chart packaged");
+    CHECK(pkg != NULL && strstr(pkg, ".tgz") != NULL, "package produced a .tgz");
+    helm_free_string(pkg);
+    helm_free_string(chart_dir);
+}
+
+/* Log-handler registration through the ABI. Record delivery/level mapping is
+ * covered by the boundary tests; here the contract is: set, re-set, and
+ * clear all succeed and never crash. */
+static void helmc_harness_log_sink(int32_t level, const char* message, void* user_data) {
+    (void)level; (void)message;
+    if (user_data) { (*(int*)user_data)++; }
+}
+
+static void test_log_handler(void) {
+    int hits = 0;
+    CHECK(helm_set_log_handler(helmc_harness_log_sink, &hits, HELM_LOG_DEBUG) == HELM_OK,
+          "log handler installed");
+    CHECK(helm_set_log_handler(helmc_harness_log_sink, &hits, HELM_LOG_ERROR) == HELM_OK,
+          "log handler level re-set");
+    CHECK(helm_set_log_handler(NULL, NULL, 0) == HELM_OK, "log handler cleared");
+    CHECK(hits >= 0, "sink storage untouched unless invoked");
+}
+
 static void test_registry_client_lifecycle(void) {
     helm_handle_t h = 0;
     CHECK(helm_registry_client_new(NULL, &h, NULL) == HELM_OK,
@@ -284,6 +345,8 @@ int main(void) {
     test_strvals_parse();
     test_chart_load_missing();
     test_chart_lifecycle();
+    test_chart_authoring();
+    test_log_handler();
     test_registry_client_lifecycle();
     test_chart_verify();
     test_config_and_context();

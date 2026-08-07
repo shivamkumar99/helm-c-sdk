@@ -1,7 +1,7 @@
 package wrapper
 
 import (
-	"io"
+	"log/slog"
 
 	"helm.sh/helm/v4/pkg/registry"
 
@@ -21,11 +21,12 @@ func ParseRegistryClientOptions(optsJSON string) (RegistryClientOptions, error) 
 	return decodeOptions[RegistryClientOptions](optsJSON, "registry client")
 }
 
-// NewRegistryClient builds an OCI registry client. Silent by default — output
-// goes to io.Discard; credentials land in CredentialsFile
-// (or helm's default registry config when empty).
+// NewRegistryClient builds an OCI registry client. Client output rides the
+// installed log handler at debug level (silent while no handler is set);
+// credentials land in CredentialsFile (or helm's default registry config
+// when empty).
 func NewRegistryClient(opts RegistryClientOptions) (*registry.Client, error) {
-	copts := []registry.ClientOption{registry.ClientOptWriter(io.Discard)}
+	copts := []registry.ClientOption{registry.ClientOptWriter(LogWriter(slog.LevelDebug))}
 	if opts.Debug {
 		copts = append(copts, registry.ClientOptDebug(true))
 	}

@@ -19,6 +19,7 @@ make build       # shared library + cgo header into build/
 make test        # go vet + go test -race ./...
 make harness     # build & run the e2e C harness against the built library
 make leak-check  # (linux) harness under AddressSanitizer/LeakSanitizer
+make pkgconfig   # generate build/helm_c.pc (VERSION=x.y.z PREFIX=/usr/local)
 make clean
 ```
 

@@ -178,6 +178,57 @@ jobs:
           path: reports/
           retention-days: 30
 
+  codacy:
+    # Code-quality analysis via Codacy. Runs in standalone mode (no account
+    # needed): findings land as a SARIF artifact and, where available, in the
+    # Security tab. When the CODACY_PROJECT_TOKEN secret is configured, test
+    # coverage is additionally pushed to the Codacy dashboard so the repo
+    # gets a quality grade + coverage tracking at app.codacy.com.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Codacy analysis (standalone, SARIF)
+        uses: codacy/codacy-analysis-cli-action@v4
+        with:
+          format: sarif
+          output: codacy.sarif
+          gh-code-scanning-compat: true
+          # Report everything; treat findings as review input, not a gate,
+          # until a baseline is agreed.
+          max-allowed-issues: 2147483647
+      - name: Upload Codacy SARIF to Security tab
+        if: always()
+        continue-on-error: true # needs a public repo or Advanced Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: codacy.sarif
+          category: codacy
+      - name: Upload Codacy report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-codacy
+          path: codacy.sarif
+          retention-days: 30
+      - uses: actions/setup-go@v5
+        if: always()
+        with:
+          go-version-file: go.mod
+      - name: Coverage for Codacy dashboard
+        env:
+          CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        run: |
+          if [ -z "$CODACY_PROJECT_TOKEN" ]; then
+            echo "skip: CODACY_PROJECT_TOKEN secret not configured — dashboard coverage not sent"
+            exit 0
+          fi
+          go test -coverprofile=coverage.out ./internal/... ./capi/...
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
+            --force-coverage-parser go -r coverage.out
+
   secrets:
     # Secret scanning over the FULL git history (not just the diff) —
     # leaked-then-deleted credentials are still leaked.

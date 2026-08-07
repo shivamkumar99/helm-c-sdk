@@ -74,6 +74,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4 # for SBOM generation over the source
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -90,6 +91,13 @@ jobs:
           mkdir -p extracted scan
           for t in dist/*.tar.gz; do tar -xzf "$t" -C extracted; done
           clamscan -r --infected dist/ extracted/ | tee scan/clamav.txt
+      - name: Generate SBOM (SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: dist/helm-c-sdk.sbom.spdx.json
+          upload-artifact: false
       - name: Generate SHA-256 checksums
         run: |
           cd dist && sha256sum *.tar.gz > sha256sums.txt && cat sha256sums.txt
@@ -100,6 +108,7 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/sha256sums.txt
+            dist/helm-c-sdk.sbom.spdx.json
             scan/clamav.txt
           if-no-files-found: error
 
@@ -121,4 +130,5 @@ jobs:
           files: |
             release/dist/*.tar.gz
             release/dist/sha256sums.txt
+            release/dist/helm-c-sdk.sbom.spdx.json
             release/scan/clamav.txt

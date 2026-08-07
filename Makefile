@@ -14,6 +14,7 @@ ifeq ($(OS),Windows_NT)
   LIB      := libhelm_c-$(VERSION).dll
   SOFLAGS  :=
   HARNESS  := harness.exe
+  PTHREAD  :=
 else
   UNAME_S := $(shell uname -s)
   ifeq ($(UNAME_S),Darwin)
@@ -28,6 +29,7 @@ else
     SOFLAGS := -extldflags=-Wl,-soname,libhelm_c.so.$(MAJOR)
   endif
   HARNESS  := harness
+  PTHREAD  := -pthread
 endif
 
 .PHONY: all build test vet fixtures harness leak-check pkgconfig clean
@@ -60,14 +62,14 @@ fixtures:
 	$(GO) run ./test/genfixtures -dir $(BUILD)/signing
 
 harness: build fixtures
-	$(CC) -Wall -Wextra -Werror -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
+	$(CC) -Wall -Wextra -Werror $(PTHREAD) -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
 		-I include -L $(BUILD) -lhelm_c
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) \
 		LD_LIBRARY_PATH=$(BUILD) DYLD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)
 
 # Linux-only: harness under AddressSanitizer/LeakSanitizer.
 leak-check: build fixtures
-	$(CC) -Wall -Wextra -Werror -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
+	$(CC) -Wall -Wextra -Werror $(PTHREAD) -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
 		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)-asan

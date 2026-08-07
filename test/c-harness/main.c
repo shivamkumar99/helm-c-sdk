@@ -8,6 +8,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef _WIN32
+#include <pthread.h>
+#endif
+
 #include "helm_c.h"
 
 static int failures = 0;
@@ -371,6 +375,71 @@ static void test_chart_soak(void) {
     }
 }
 
+/* Concurrency stress: FFI hosts (Node's libuv pool, Swift GCD, Python
+ * threads) call from arbitrary threads — hammer the ABI from many pthreads
+ * at once. Windows builds skip this section (the same paths run under Go's
+ * race detector in CI on all OSes). */
+#ifndef _WIN32
+#define STRESS_THREADS 8
+#define STRESS_ITERS 50
+
+static void* stress_worker(void* arg) {
+    (void)arg;
+    for (int i = 0; i < STRESS_ITERS; i++) {
+        /* Pure calls. */
+        char* v = helm_c_version();
+        helm_free_string(v);
+        helm_release_name_validate("stress-name", NULL);
+
+        char* out = NULL;
+        if (helm_strvals_parse("a=1,b=two", &out, NULL) == HELM_OK) {
+            helm_free_string(out);
+        }
+
+        /* Handle churn across threads. */
+        helm_handle_t rc = 0;
+        if (helm_registry_client_new(NULL, &rc, NULL) == HELM_OK) {
+            helm_registry_client_free(rc, NULL);
+        }
+        if (g_chart_dir != NULL) {
+            helm_handle_t ch = 0;
+            if (helm_chart_load(g_chart_dir, &ch, NULL) == HELM_OK) {
+                char* meta = NULL;
+                helm_chart_metadata(ch, &meta, NULL);
+                helm_free_string(meta);
+                helm_chart_free(ch, NULL);
+            }
+        }
+
+        /* Defined errors under contention. */
+        helm_handle_free(0, NULL);
+        helm_open_handles_count();
+    }
+    return NULL;
+}
+
+static void test_thread_stress(void) {
+    pthread_t threads[STRESS_THREADS];
+    for (int i = 0; i < STRESS_THREADS; i++) {
+        if (pthread_create(&threads[i], NULL, stress_worker, NULL) != 0) {
+            CHECK(0, "pthread_create failed");
+            return;
+        }
+    }
+    for (int i = 0; i < STRESS_THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    CHECK(helm_open_handles_count() == 0,
+          "thread stress leaves no live handles");
+    printf("thread stress: %d threads x %d iterations completed\n",
+           STRESS_THREADS, STRESS_ITERS);
+}
+#else
+static void test_thread_stress(void) {
+    printf("skip: thread stress not built on Windows\n");
+}
+#endif
+
 int main(void) {
     test_versions();
     test_string_free_null_safe();
@@ -386,6 +455,7 @@ int main(void) {
     test_config_and_context();
     test_soak();
     test_chart_soak();
+    test_thread_stress();
 
     /* Leak gate: nothing in this harness may leave a live handle behind. */
     CHECK(helm_open_handles_count() == 0, "leak gate: zero open handles");

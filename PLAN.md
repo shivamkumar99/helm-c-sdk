@@ -74,12 +74,16 @@ Registry entries carry a type tag for this.
   cross into C (UB).
 - Registry: `sync.RWMutex`, ids monotonically increasing, never reused (stale-handle use
   returns `HELM_ERR_INVALID_HANDLE`, never a wrong object).
-- **Concurrency contract mirrors the SDK exactly** (established in the earlier design round):
-  charts are immutable/safe to share; `kube.Interface` is concurrency-safe; one
-  `Configuration` supports parallel actions on **different** releases, but concurrent writes
-  to the **same** release can corrupt history (`pkg/storage/storage.go`) — so action handles
-  are single-owner, guarded by an atomic CAS that returns `HELM_ERR_CONCURRENT_USE` instead
-  of racing. Verified with `-race` plus a TSAN pthread stress test in the C harness.
+- **Concurrency contract mirrors the SDK exactly**: charts are immutable/safe to share;
+  `kube.Interface` is concurrency-safe; one `Configuration` supports parallel actions on
+  **different** releases, but concurrent writes to the **same** release can corrupt history
+  (`pkg/storage/storage.go`) — callers serialize per release (documented per function).
+  Action objects are constructed per call, so no cross-call action state exists to guard.
+  Verified with `-race` on every Go test run plus a multi-threaded pthread stress section
+  in the C harness. (An earlier sketch of single-owner action handles with a CAS guard was
+  dropped when per-call action construction made it unnecessary; C-side TSAN was evaluated
+  and rejected — the Go runtime inside the library is not TSAN-instrumented, so it would
+  produce false positives rather than findings.)
 - Cancellation: `helm_context_new()/helm_context_cancel(h)/helm_context_free(h)` backed by
   `context.Context`; long-running ops (install/upgrade/pull) take an optional context handle
   and use the SDK's `RunWithContext`.

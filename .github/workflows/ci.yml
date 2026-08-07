@@ -294,6 +294,15 @@ jobs:
           # output to file so the (potentially public) job log stays clean.
           /tmp/gitleaks git . --redact --report-format sarif \
             --report-path reports/gitleaks.sarif > reports/gitleaks.txt 2>&1
+      - name: trufflehog (verified secrets, full history, findings to file)
+        shell: bash
+        run: |
+          # Second scanner with a different detection approach: trufflehog
+          # verifies candidate credentials against their services, so a hit
+          # is a live secret. --fail exits non-zero on verified findings.
+          docker run --rm -v "$PWD:/repo" ghcr.io/trufflesecurity/trufflehog:latest \
+            git file:///repo --only-verified --fail --no-update \
+            > reports/trufflehog.txt 2>&1
       - name: Upload secrets report (private repo only)
         if: always() && github.event.repository.private
         uses: actions/upload-artifact@v4
@@ -338,6 +347,19 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  sbom:
+    # Software bill of materials (SPDX via syft) for every build — supply
+    # chain answerability: exactly which modules and versions are inside.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (syft, SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: sbom.spdx.json
 
   kind-e2e:
     # Real-cluster end-to-end: install/upgrade/rollback/uninstall against a

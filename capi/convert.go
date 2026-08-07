@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"unsafe"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 )
 
 // cErrorOut writes err into errOut as a malloc'd C string the caller frees

@@ -6,8 +6,8 @@ package main
 import "C"
 
 import (
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
-	"github.com/shivamkumar99/helm-c-sdk/internal/wrapper"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 // helm_strvals_parse parses a Helm --set expression ("a=1,b.c=two") into a

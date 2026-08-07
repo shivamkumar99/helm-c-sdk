@@ -243,7 +243,7 @@ int32_t helm_package_run(const char* path, const char* opts_json,
 ```
 Packages the chart at `path` into a `.tgz` (SDK `action.Package`); `*out_path` receives
 the archive path. `opts_json` keys (all optional; unknown keys →
-`HELM_ERR_INVALID_ARG`, ADR-0004):
+`HELM_ERR_INVALID_ARG`; see docs/DESIGN.md §4):
 
 | key | meaning | default |
 |---|---|---|
@@ -297,7 +297,7 @@ Renders the chart's templates **offline** — no cluster; the `lookup` template 
 returns empty results (SDK `ToRenderValues` + `engine.Render`, default capabilities).
 `*out` receives `{"<chart>/templates/x.yaml": "<manifest>", ...}` JSON.
 
-`opts_json` keys (all optional; unknown keys → `HELM_ERR_INVALID_ARG`, ADR-0004):
+`opts_json` keys (all optional; unknown keys → `HELM_ERR_INVALID_ARG`; see docs/DESIGN.md §4):
 
 | key | meaning | default |
 |---|---|---|

@@ -12,6 +12,27 @@
 
 static int failures = 0;
 
+/* Chart directory produced by test_chart_authoring; later tests reuse it so
+ * the harness needs no pre-existing chart fixture on disk. */
+static char* g_chart_dir = NULL;
+
+static const char* kubeconfig_yaml =
+    "apiVersion: v1\n"
+    "kind: Config\n"
+    "clusters:\n"
+    "  - name: helmc-test\n"
+    "    cluster:\n"
+    "      server: https://127.0.0.1:1\n"
+    "contexts:\n"
+    "  - name: helmc-test\n"
+    "    context:\n"
+    "      cluster: helmc-test\n"
+    "      user: helmc-test\n"
+    "current-context: helmc-test\n"
+    "users:\n"
+    "  - name: helmc-test\n"
+    "    user: {}\n";
+
 #define CHECK(cond, msg)                                            \
     do {                                                            \
         if (!(cond)) {                                              \
@@ -89,30 +110,30 @@ static void test_chart_load_missing(void) {
     helm_free_string(err);
 }
 
-/* Full chart lifecycle against the fixture named by HELMC_TESTCHART. */
+/* Full chart lifecycle against the chart authored earlier in the run. */
 static void test_chart_lifecycle(void) {
-    const char* fixture = getenv("HELMC_TESTCHART");
-    if (fixture == NULL || fixture[0] == '\0') {
-        printf("skip: HELMC_TESTCHART not set — chart lifecycle not exercised\n");
+    const char* fixture = g_chart_dir;
+    if (fixture == NULL) {
+        printf("skip: no authored chart — chart lifecycle not exercised\n");
         return;
     }
 
     helm_handle_t h = 0;
     char* err = NULL;
-    CHECK(helm_chart_load(fixture, &h, &err) == HELM_OK, "fixture chart loads");
+    CHECK(helm_chart_load(fixture, &h, &err) == HELM_OK, "authored chart loads");
     if (err) { fprintf(stderr, "  load error: %s\n", err); helm_free_string(err); }
     CHECK(h != 0, "chart handle issued");
 
     char* meta = NULL;
     CHECK(helm_chart_metadata(h, &meta, NULL) == HELM_OK, "metadata retrieved");
-    CHECK(meta != NULL && strstr(meta, "testchart") != NULL,
-          "metadata names the fixture chart");
+    CHECK(meta != NULL && strstr(meta, "harnesschart") != NULL,
+          "metadata names the authored chart");
     helm_free_string(meta);
 
     char* vals = NULL;
     CHECK(helm_chart_values(h, &vals, NULL) == HELM_OK, "values retrieved");
-    CHECK(vals != NULL && strstr(vals, "replicaCount") != NULL,
-          "values contain fixture keys");
+    CHECK(vals != NULL && vals[0] == '{',
+          "values render as a JSON object");
     helm_free_string(vals);
 
     char* lint = NULL;
@@ -135,7 +156,7 @@ static void test_chart_lifecycle(void) {
     CHECK(helm_render(h, "{\"replicaCount\":2}", "{\"name\":\"harness-rel\"}",
                       &manifests, NULL) == HELM_OK,
           "offline render succeeds");
-    CHECK(manifests != NULL && strstr(manifests, "harness-rel-config") != NULL,
+    CHECK(manifests != NULL && strstr(manifests, "harness-rel") != NULL,
           "rendered manifest carries the release name");
     helm_free_string(manifests);
 
@@ -195,7 +216,10 @@ static void test_chart_authoring(void) {
     CHECK(helm_package_run(chart_dir, opts, &pkg, NULL) == HELM_OK, "chart packaged");
     CHECK(pkg != NULL && strstr(pkg, ".tgz") != NULL, "package produced a .tgz");
     helm_free_string(pkg);
-    helm_free_string(chart_dir);
+
+    /* Kept (not freed) so the lifecycle and soak tests below can reuse the
+     * authored chart instead of needing a committed fixture. */
+    g_chart_dir = chart_dir;
 }
 
 /* Log-handler registration through the ABI. Record delivery/level mapping is
@@ -241,8 +265,8 @@ static void test_chart_verify(void) {
         return;
     }
     char tgz[512], keyring[512];
-    snprintf(tgz, sizeof(tgz), "%s/signtest-0.1.0.tgz", dir);
-    snprintf(keyring, sizeof(keyring), "%s/helm-test-key.pub", dir);
+    snprintf(tgz, sizeof(tgz), "%s/testchart-0.1.0.tgz", dir);
+    snprintf(keyring, sizeof(keyring), "%s/pubring.gpg", dir);
 
     char* out = NULL;
     char* err = NULL;
@@ -263,9 +287,19 @@ static void test_chart_verify(void) {
 }
 
 static void test_config_and_context(void) {
-    const char* kubeconfig = getenv("HELMC_KUBECONFIG");
-    if (kubeconfig == NULL || kubeconfig[0] == '\0') {
-        printf("skip: HELMC_KUBECONFIG not set — config lifecycle not exercised\n");
+    const char* workdir = getenv("HELMC_WORK_DIR");
+    char kubeconfig[512];
+    kubeconfig[0] = '\0';
+    if (workdir != NULL && workdir[0] != '\0') {
+        snprintf(kubeconfig, sizeof(kubeconfig), "%s/kubeconfig.yaml", workdir);
+        FILE* f = fopen(kubeconfig, "w");
+        if (f == NULL || fputs(kubeconfig_yaml, f) == EOF) {
+            kubeconfig[0] = '\0';
+        }
+        if (f != NULL) { fclose(f); }
+    }
+    if (kubeconfig[0] == '\0') {
+        printf("skip: HELMC_WORK_DIR not set — config lifecycle not exercised\n");
     } else {
         char opts[512];
         snprintf(opts, sizeof(opts),
@@ -320,8 +354,8 @@ static void test_soak(void) {
 static void test_chart_soak(void) {
     /* Handle-churn loop: any leaked handle or C string shows up in the leak
      * gate / ASan run. */
-    const char* fixture = getenv("HELMC_TESTCHART");
-    if (fixture == NULL || fixture[0] == '\0') {
+    const char* fixture = g_chart_dir;
+    if (fixture == NULL) {
         return;
     }
     for (int i = 0; i < 100; i++) {
@@ -344,8 +378,8 @@ int main(void) {
     test_release_name_validate();
     test_strvals_parse();
     test_chart_load_missing();
+    test_chart_authoring(); /* must precede lifecycle/soak: authors the chart */
     test_chart_lifecycle();
-    test_chart_authoring();
     test_log_handler();
     test_registry_client_lifecycle();
     test_chart_verify();

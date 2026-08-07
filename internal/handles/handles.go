@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 )
 
 // Type tags every registry entry so a handle can only be used as the type it

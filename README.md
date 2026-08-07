@@ -84,7 +84,7 @@ helm_install(cfg, 0, chart, NULL, "demo", "{\"replicaCount\":3}", NULL, &release
 - [docs/MEMORY.md](docs/MEMORY.md) — the memory-ownership contract (who allocates, who
   frees), written for binding authors
 - [docs/BUILD.md](docs/BUILD.md) — building and linking on Linux/macOS/Windows
-- [docs/adr/](docs/adr) — design decisions (handle registry, JSON boundary, error model,
+- [docs/DESIGN.md](docs/DESIGN.md) — design decisions (handle registry, JSON boundary, error model,
   SDK pinning)
 
 ## Docker
@@ -103,11 +103,32 @@ docker cp hc:/usr/local/include/helm_c.h .
 docker rm hc
 ```
 
+## Use from Go
+
+The layer beneath the C ABI is an importable Go package — Go programs can skip cgo
+entirely and use the simplified, JSON-oriented API directly:
+
+```go
+import (
+    "github.com/shivamkumar99/helm-c-sdk/pkg/wrapper" // operations
+    "github.com/shivamkumar99/helm-c-sdk/pkg/cerrors" // stable error codes
+)
+
+c, err := wrapper.LoadChart("./mychart")
+opts, _ := wrapper.ParseRenderOptions(`{"name":"demo"}`)
+manifests, err := wrapper.RenderChart(c, `{"replicaCount":3}`, opts) // JSON out
+code := cerrors.FromError(err)                                      // stable code
+```
+
+Everything the C API exposes is available: chart operations, values/rendering, OCI
+registries, repositories, dependencies, provenance, and the release lifecycle.
+
 ## Scope
 
-This repository ships the **C library, header, and docs only**. Language bindings
-(Node.js N-API, Python, Swift, …) are intended to live in their own repositories on top
-of this ABI — the API is deliberately shaped so those wrappers stay thin.
+This repository ships the **C library, header, docs — and the Go packages above**.
+Language bindings (Node.js N-API, Python, Swift, …) are intended to live in their own
+repositories on top of this ABI — the API is deliberately shaped so those wrappers stay
+thin.
 
 ## License
 

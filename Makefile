@@ -17,7 +17,7 @@ else
   HARNESS  := harness
 endif
 
-.PHONY: all build test vet harness leak-check pkgconfig clean
+.PHONY: all build test vet fixtures harness leak-check pkgconfig clean
 
 all: build
 
@@ -32,17 +32,21 @@ test: vet
 
 # End-to-end: compile the C harness against the freshly built library and run
 # it the way a real binding would.
-harness: build
+# Signing fixtures are generated, never committed.
+fixtures:
+	$(GO) run ./test/genfixtures -dir $(BUILD)/signing
+
+harness: build fixtures
 	$(CC) -Wall -Wextra -Werror -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
 		-I include -L $(BUILD) -lhelm_c
-	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$$(mktemp -d) \
+	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) \
 		LD_LIBRARY_PATH=$(BUILD) DYLD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)
 
 # Linux-only: harness under AddressSanitizer/LeakSanitizer.
-leak-check: build
+leak-check: build fixtures
 	$(CC) -Wall -Wextra -Werror -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
 		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c
-	HELMC_TESTCHART=testdata/testchart HELMC_KUBECONFIG=testdata/kubeconfig.yaml HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
+	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)-asan
 
 # Generates a pkg-config file for consumers; VERSION comes from the release

@@ -42,14 +42,15 @@ jobs:
       - name: Coverage report + floor gate
         shell: bash
         run: |
-          go test -coverprofile=reports/coverage.out ./internal/... ./capi/...
+          go test -coverprofile=reports/coverage.out ./pkg/... ./internal/... ./capi/...
           go tool cover -func=reports/coverage.out | tee reports/coverage-summary.txt
-          # Gate: >=80% across internal/ (the logic layer). capi shims are
-          # exercised through the C harness, which Go coverage cannot count,
-          # so they are reported above but not gated.
-          go test -coverprofile=reports/coverage-internal.out ./internal/...
+          # Gate: >=80% across the logic layers (pkg/ + the handle registry).
+          # Excluded: capi shims (exercised through the C harness, invisible
+          # to Go coverage) and internal/testfixtures (test tooling, executed
+          # by every suite but only ever counted at 0%).
+          go test -coverprofile=reports/coverage-internal.out ./pkg/... ./internal/handles/...
           total=$(go tool cover -func=reports/coverage-internal.out | awk '/^total:/ {gsub("%","",$3); print $3}')
-          echo "internal/ coverage: ${total}% (floor: 80%)" | tee -a reports/coverage-summary.txt
+          echo "logic-layer coverage: ${total}% (floor: 80%)" | tee -a reports/coverage-summary.txt
           awk -v t="$total" 'BEGIN { exit (t+0 < 80.0) ? 1 : 0 }'
       - name: Build shared library
         run: make build
@@ -63,9 +64,8 @@ jobs:
         run: |
           gcc -Wall -Wextra -Werror -o build/harness.exe test/c-harness/main.c \
             -I include -L build -lhelm_c
-          HELMC_TESTCHART=testdata/testchart \
-          HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
-          HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$(mktemp -d) \
+          go run ./test/genfixtures -dir build/signing
+          HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
           PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness.txt
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload test & coverage reports
@@ -122,9 +122,8 @@ jobs:
           make build
           x86_64-w64-mingw32-clang -Wall -Wextra -Werror -o build/harness.exe \
             test/c-harness/main.c -I include -L build -lhelm_c
-          HELMC_TESTCHART=testdata/testchart \
-          HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
-          HELMC_SIGNING_DIR=testdata/signing HELMC_WORK_DIR=$(mktemp -d) \
+          go run ./test/genfixtures -dir build/signing
+          HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
           PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness-llvm.txt
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload reports
@@ -320,7 +319,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p reports
-          go test -tags kind -race -v ./internal/wrapper -run TestKind 2>&1 | tee reports/kind-e2e.txt
+          go test -tags kind -race -v ./pkg/wrapper -run TestKind 2>&1 | tee reports/kind-e2e.txt
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload e2e report
         if: always()
@@ -344,7 +343,7 @@ jobs:
         run: |
           mkdir -p reports
           for target in FuzzParseSetString FuzzLoadArchive FuzzValuesRoundTrip; do
-            go test ./internal/wrapper -run '^$' -fuzz "$target" -fuzztime 30s \
+            go test ./pkg/wrapper -run '^$' -fuzz "$target" -fuzztime 30s \
               2>&1 | tee -a reports/fuzz.txt
             test "${PIPESTATUS[0]}" -eq 0
           done
@@ -355,7 +354,7 @@ jobs:
           name: reports-fuzz
           path: |
             reports/
-            internal/wrapper/testdata/fuzz/
+            pkg/wrapper/testdata/fuzz/
           retention-days: 30
 
   leak-check:

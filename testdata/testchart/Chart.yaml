@@ -1,6 +1,0 @@
-apiVersion: v2
-name: testchart
-description: Fixture chart for helm-c tests
-type: application
-version: 0.1.0
-appVersion: "1.0.0"

@@ -7,7 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 )
 
 func TestPutGetFreeLifecycle(t *testing.T) {

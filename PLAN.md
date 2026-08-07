@@ -1,7 +1,9 @@
 # PLAN.md — helm-c implementation plan
 
 > The blueprint this project was built from, phase by phase; items are ticked as they
-> land. Kept for history and for planning the remaining backlog.
+> land. Kept for history and for planning the remaining backlog. The layout has since
+> evolved: the Go wrapper layer is public (`pkg/wrapper`, `pkg/cerrors`), and all test
+> fixtures are generated at runtime (`internal/testfixtures`) — nothing is committed.
 
 ## 1. Goal
 
@@ -27,7 +29,7 @@ helm-c/
     handles/              # thread-safe handle registry
     cerrors/              # Go error -> stable C error-code mapping
   include/helm_c.h        # hand-maintained public header (stable ABI, doc comments)
-  docs/                   # API.md, MEMORY.md, BUILD.md, adr/
+  docs/                   # API.md, MEMORY.md, BUILD.md, DESIGN.md
   test/c-harness/         # C program driving the built library like a real binding
   Makefile                # build/test targets per OS
   .github/workflows/ci.yml
@@ -101,7 +103,7 @@ Registry entries carry a type tag for this.
 - [x] CI: 3-OS matrix (build, -race tests, harness) + golangci-lint + gosec + govulncheck
       + ASan/LSan leak job + CodeQL (go, c-cpp) — *runs once helm-c is a repo root*
 - [x] Docs: API.md (all 6 symbols), MEMORY.md, BUILD.md
-- [x] ADRs: 0001 handle registry, 0002 pinned SDK release, 0003 error codes + error_out
+- [x] Design decisions recorded (consolidated in docs/DESIGN.md)
 - Note: cgo is not allowed in `_test.go` files — boundary tests go through the pure-Go
   `capi/testbridge.go` seam (kept unexported, test-only by convention).
 
@@ -228,9 +230,9 @@ An earlier design round (before this folder was recreated) had already settled s
 differently — modeled on **storj/uplink-c**. Where this plan diverges, the ADR must pick one
 deliberately:
 
-1. ~~**Result shape**~~ — **RESOLVED (ADR-0004, 2026-08-07):** status + typed out-params;
+1. ~~**Result shape**~~ — **RESOLVED (2026-08-07):** status + typed out-params;
    no struct-by-value returns.
-2. ~~**Action options**~~ — **RESOLVED (ADR-0004, 2026-08-07):** single `opts_json` with
+2. ~~**Action options**~~ — **RESOLVED (2026-08-07):** single `opts_json` with
    strict (`DisallowUnknownFields`) parsing; keys additive forever.
 3. **RESOLVED (owner, 2026-08-07):** helm-c becomes its own GitHub repo on the owner's
    account — module path rename pending the account/repo name; then `git init` + push

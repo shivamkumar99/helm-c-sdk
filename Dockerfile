@@ -27,11 +27,11 @@ RUN CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o /out/libhelm_c.so ./
 FROM builder AS test
 
 RUN go vet ./... \
- && go test ./internal/handles/... ./internal/cerrors/... ./capi/... \
- && HELMC_TESTCHART=testdata/testchart \
-    HELMC_KUBECONFIG=testdata/kubeconfig.yaml \
-    HELMC_SIGNING_DIR=testdata/signing \
-    LD_LIBRARY_PATH=/out /out/helm-c-harness
+ && go test ./internal/... ./pkg/cerrors/... ./capi/... \
+ && go run ./test/genfixtures -dir /tmp/signing \
+ && HELMC_SIGNING_DIR=/tmp/signing \
+    HELMC_WORK_DIR=/tmp/work \
+    LD_LIBRARY_PATH=/out sh -c 'mkdir -p /tmp/work && /out/helm-c-harness' 
 
 # ---------------------------------------------------------------------------
 # Stage 3 — runtime: hardened, minimal.

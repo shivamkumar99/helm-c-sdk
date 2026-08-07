@@ -8,8 +8,8 @@ import "C"
 import (
 	"runtime/debug"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 )
 
 // libVersion is the helm-c library version; keep in lockstep with the

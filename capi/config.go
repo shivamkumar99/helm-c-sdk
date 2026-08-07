@@ -8,9 +8,9 @@ import "C"
 import (
 	"context"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/internal/wrapper"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 // helm_config_new builds a cluster-connected configuration from a kubeconfig

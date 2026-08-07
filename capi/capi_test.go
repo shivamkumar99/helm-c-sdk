@@ -2,15 +2,16 @@ package main
 
 import (
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/internal/wrapper"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 func TestVersions(t *testing.T) {
@@ -88,7 +89,7 @@ func TestStrvalsParseThroughCAPI(t *testing.T) {
 func TestChartLifecycleThroughCAPI(t *testing.T) {
 	require.EqualValues(t, 0, registry.Count())
 
-	code, h, detail := testChartLoad("../testdata/testchart")
+	code, h, detail := testChartLoad(fixtureChart)
 	require.EqualValues(t, cerrors.CodeOK, code, detail)
 	require.NotZero(t, h)
 	assert.EqualValues(t, 1, registry.Count())
@@ -118,7 +119,7 @@ func TestChartLoadFailureThroughCAPI(t *testing.T) {
 }
 
 func TestValuesAndRenderThroughCAPI(t *testing.T) {
-	code, h, detail := testChartLoad("../testdata/testchart")
+	code, h, detail := testChartLoad(fixtureChart)
 	require.EqualValues(t, cerrors.CodeOK, code, detail)
 	defer func() {
 		code, _ := testChartFree(h)
@@ -151,7 +152,7 @@ func TestValuesAndRenderThroughCAPI(t *testing.T) {
 }
 
 func TestSchemaValidateFailureThroughCAPI(t *testing.T) {
-	code, h, detail := testChartLoad("../testdata/schemachart")
+	code, h, detail := testChartLoad(fixtureSchema)
 	require.EqualValues(t, cerrors.CodeOK, code, detail)
 	defer testChartFree(h)
 
@@ -190,7 +191,7 @@ func TestRegistryClientBadOptsThroughCAPI(t *testing.T) {
 }
 
 func TestConfigAndListThroughCAPI(t *testing.T) {
-	opts := `{"kubeconfig_path":"../testdata/kubeconfig.yaml","storage_driver":"memory"}`
+	opts := `{"kubeconfig_path":` + strconv.Quote(fixtureKubeconfig) + `,"storage_driver":"memory"}`
 	code, h, detail := testConfigNew(&opts)
 	require.EqualValues(t, cerrors.CodeOK, code, detail)
 	require.NotZero(t, h)

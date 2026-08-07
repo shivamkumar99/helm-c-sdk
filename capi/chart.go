@@ -6,9 +6,9 @@ package main
 import "C"
 
 import (
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/internal/wrapper"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 // helm_release_name_validate checks name against Helm's release-name rules.

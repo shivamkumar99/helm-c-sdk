@@ -15,8 +15,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"github.com/shivamkumar99/helm-c-sdk/internal/cerrors"
-	"github.com/shivamkumar99/helm-c-sdk/internal/wrapper"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
+	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 // The registered C callback. Guarded: the callback may be swapped while other

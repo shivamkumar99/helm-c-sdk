@@ -1,0 +1,19 @@
+# Automated dependency update PRs. Each PR runs the full CI gate (3-OS build,
+# tests, SAST, secrets, Codacy), so a bad bump cannot merge silently.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      go-deps:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly

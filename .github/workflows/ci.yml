@@ -1,0 +1,437 @@
+# CI for helm-c. Assumes this folder is the repository root (see docs/BUILD.md).
+# Every PR must build the shared library, pass -race tests, and run the C
+# harness on Linux, macOS, AND Windows. Every job uploads its report as an
+# artifact (and SARIF to the Security tab where applicable) for post-run review.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install mingw-w64 (Windows)
+        if: runner.os == 'Windows'
+        run: choco install mingw -y
+      - name: Format check
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l .)"
+      - name: Dependency integrity (go mod verify + tidy drift)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          go mod verify
+          go mod tidy -diff
+      - name: Vet
+        run: go vet ./...
+      - name: Unit + boundary tests (-race, with report)
+        shell: bash
+        run: |
+          mkdir -p reports
+          go test -race -v ./... 2>&1 | tee reports/test-results.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Coverage report + floor gate
+        shell: bash
+        run: |
+          go test -coverprofile=reports/coverage.out ./pkg/... ./internal/... ./capi/...
+          go tool cover -func=reports/coverage.out | tee reports/coverage-summary.txt
+          # Gate: >=80% across the logic layers (pkg/ + the handle registry).
+          # Excluded: capi shims (exercised through the C harness, invisible
+          # to Go coverage) and internal/testfixtures (test tooling, executed
+          # by every suite but only ever counted at 0%).
+          go test -coverprofile=reports/coverage-internal.out ./pkg/... ./internal/handles/...
+          total=$(go tool cover -func=reports/coverage-internal.out | awk '/^total:/ {gsub("%","",$3); print $3}')
+          echo "logic-layer coverage: ${total}% (floor: 80%)" | tee -a reports/coverage-summary.txt
+          awk -v t="$total" 'BEGIN { exit (t+0 < 80.0) ? 1 : 0 }'
+      - name: Build shared library
+        run: make build
+      - name: E2E C harness
+        if: runner.os != 'Windows'
+        shell: bash
+        run: make harness 2>&1 | tee reports/harness.txt
+      - name: E2E C harness (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          gcc -Wall -Wextra -Werror -o build/harness.exe test/c-harness/main.c \
+            -I include -L build -lhelm_c
+          go run ./test/genfixtures -dir build/signing
+          HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
+          PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Upload test & coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ matrix.os }}
+          path: reports/
+          retention-days: 30
+      - name: Upload library artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-c-${{ matrix.os }}
+          path: |
+            build/libhelm_c.so.*
+            build/libhelm_c.*.dylib
+            build/libhelm_c-*.dll
+            include/helm_c.h
+          if-no-files-found: error
+
+  build-test-windows-llvm:
+    # Second Windows toolchain: llvm-mingw (clang targeting mingw-w64), so a
+    # regression against either supported toolchain is caught. The MSYS2
+    # mingw-w64 gcc build runs in the main matrix.
+    runs-on: windows-latest
+    env:
+      # Pinned llvm-mingw release tag (https://github.com/mstorsjo/llvm-mingw);
+      # bump deliberately.
+      LLVM_MINGW_VERSION: "20250613"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install llvm-mingw
+        shell: bash
+        run: |
+          curl -sSL -o llvm-mingw.zip \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-x86_64.zip"
+          unzip -q llvm-mingw.zip -d "$RUNNER_TEMP/llvm-mingw"
+          echo "$RUNNER_TEMP/llvm-mingw/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-x86_64/bin" >> "$GITHUB_PATH"
+      - name: Vet + test (cgo via clang)
+        shell: bash
+        env:
+          CC: x86_64-w64-mingw32-clang
+        run: |
+          mkdir -p reports
+          go vet ./...
+          go test -v ./... 2>&1 | tee reports/test-results-llvm.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Build library + harness (clang)
+        shell: bash
+        env:
+          CC: x86_64-w64-mingw32-clang
+        run: |
+          make build
+          x86_64-w64-mingw32-clang -Wall -Wextra -Werror -o build/harness.exe \
+            test/c-harness/main.c -I include -L build -lhelm_c
+          go run ./test/genfixtures -dir build/signing
+          HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
+          PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness-llvm.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-windows-llvm
+          path: reports/
+          retention-days: 30
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v6
+
+  sast:
+    # Static analysis: gosec (Go security patterns) + govulncheck (known CVEs
+    # reachable from our call graph). Findings land in the Security tab
+    # (SARIF) and as downloadable artifacts.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Finding details go to FILES only, never stdout: on a public repo the
+      # job log is world-readable, and a vulnerability list is a roadmap for
+      # attackers. The log carries pass/fail only.
+      - name: gosec (SARIF + text report, findings to file)
+        shell: bash
+        run: |
+          mkdir -p reports
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          gosec -quiet -fmt sarif -out reports/gosec.sarif ./... || true
+          gosec -quiet -fmt text -out reports/gosec.txt ./...
+      - name: Upload gosec SARIF to Security tab (maintainer-only view)
+        if: always()
+        continue-on-error: true # needs a public repo or Advanced Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/gosec.sarif
+          category: gosec
+      - name: govulncheck (findings to file)
+        shell: bash
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./... > reports/govulncheck.txt 2>&1
+      - name: Upload SAST reports (private repo only)
+        # Run artifacts are downloadable by anyone who can view the repo, so
+        # finding details are only stored while the repo is private; on a
+        # public repo they live solely in the maintainer-only Security tab.
+        if: always() && github.event.repository.private
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-sast
+          path: reports/
+          retention-days: 30
+
+  codacy:
+    # Code-quality analysis via Codacy. Runs in standalone mode (no account
+    # needed): findings land as a SARIF artifact and, where available, in the
+    # Security tab. When the CODACY_PROJECT_TOKEN secret is configured, test
+    # coverage is additionally pushed to the Codacy dashboard so the repo
+    # gets a quality grade + coverage tracking at app.codacy.com.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Codacy analysis (standalone, SARIF)
+        uses: codacy/codacy-analysis-cli-action@v4
+        with:
+          format: sarif
+          output: codacy.sarif
+          gh-code-scanning-compat: true
+          # Report everything; treat findings as review input, not a gate,
+          # until a baseline is agreed.
+          max-allowed-issues: 2147483647
+      - name: Upload Codacy SARIF to Security tab
+        if: always()
+        continue-on-error: true # needs a public repo or Advanced Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: codacy.sarif
+          category: codacy
+      - name: Upload Codacy report artifact (private repo only)
+        if: always() && github.event.repository.private
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-codacy
+          path: codacy.sarif
+          retention-days: 30
+      - uses: actions/setup-go@v5
+        if: always()
+        with:
+          go-version-file: go.mod
+      - name: Coverage for Codacy dashboard
+        env:
+          CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        run: |
+          if [ -z "$CODACY_PROJECT_TOKEN" ]; then
+            echo "skip: CODACY_PROJECT_TOKEN secret not configured — dashboard coverage not sent"
+            exit 0
+          fi
+          go test -coverprofile=coverage.out ./internal/... ./capi/...
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report \
+            --force-coverage-parser go -r coverage.out
+
+  osv-scan:
+    # Known-vulnerability scan of the full dependency graph (go.mod + Docker
+    # base images), complementing govulncheck's call-graph analysis. Findings
+    # to file only; artifact stored while the repo is private.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: osv-scanner (findings to file)
+        shell: bash
+        run: |
+          mkdir -p reports
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest \
+            || go install github.com/google/osv-scanner/cmd/osv-scanner@latest
+          osv-scanner scan --recursive . > reports/osv-scanner.txt 2>&1 \
+            || osv-scanner -r . > reports/osv-scanner.txt 2>&1
+      - name: Upload osv report (private repo only)
+        if: always() && github.event.repository.private
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-osv
+          path: reports/
+          retention-days: 30
+
+  secrets:
+    # Secret scanning over the FULL git history (not just the diff) —
+    # leaked-then-deleted credentials are still leaked.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (full history, redacted, findings to file)
+        shell: bash
+        run: |
+          mkdir -p reports
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            | tar -xz -C /tmp gitleaks
+          # --redact so a discovered secret value never appears in any report;
+          # output to file so the (potentially public) job log stays clean.
+          /tmp/gitleaks git . --redact --report-format sarif \
+            --report-path reports/gitleaks.sarif > reports/gitleaks.txt 2>&1
+      - name: trufflehog (verified secrets, full history, findings to file)
+        shell: bash
+        run: |
+          # Second scanner with a different detection approach: trufflehog
+          # verifies candidate credentials against their services, so a hit
+          # is a live secret. --fail exits non-zero on verified findings.
+          docker run --rm -v "$PWD:/repo" ghcr.io/trufflesecurity/trufflehog:latest \
+            git file:///repo --only-verified --fail --no-update \
+            > reports/trufflehog.txt 2>&1
+      - name: Upload secrets report (private repo only)
+        if: always() && github.event.repository.private
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-secrets
+          path: reports/
+          retention-days: 30
+
+  docker:
+    # Builds the hardened multi-stage image per PR — its internal test-gate
+    # stage must pass or the build fails — then smoke-runs it. On pushes to
+    # main the image is published to GHCR (package visibility follows the
+    # repo's visibility).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (runs in-image test gate)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: helm-c-sdk:ci
+      - name: Smoke-run image
+        run: docker run --rm helm-c-sdk:ci
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
+  sbom:
+    # Software bill of materials (SPDX via syft) for every build — supply
+    # chain answerability: exactly which modules and versions are inside.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate SBOM (syft, SPDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          artifact-name: sbom.spdx.json
+
+  kind-e2e:
+    # Real-cluster end-to-end: install/upgrade/rollback/uninstall against a
+    # kind cluster (local tests use the memory driver + fake kube clients).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: helm/kind-action@v1
+      - name: Cluster lifecycle e2e (with report)
+        shell: bash
+        run: |
+          mkdir -p reports
+          go test -tags kind -race -v ./pkg/wrapper -run TestKind 2>&1 | tee reports/kind-e2e.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Upload e2e report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-kind-e2e
+          path: reports/
+          retention-days: 30
+
+  fuzz:
+    # Dynamic testing of the untrusted-input parsers. Failing inputs are
+    # written to testdata/fuzz/ and uploaded so failures reproduce locally.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Fuzz (strvals, chart archives, values)
+        shell: bash
+        run: |
+          mkdir -p reports
+          for target in FuzzParseSetString FuzzLoadArchive FuzzValuesRoundTrip; do
+            go test ./pkg/wrapper -run '^$' -fuzz "$target" -fuzztime 30s \
+              2>&1 | tee -a reports/fuzz.txt
+            test "${PIPESTATUS[0]}" -eq 0
+          done
+      - name: Upload fuzz report (+ any failing inputs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-fuzz
+          path: |
+            reports/
+            pkg/wrapper/testdata/fuzz/
+          retention-days: 30
+
+  leak-check:
+    # DAST-equivalent for a native library: the e2e harness under ASan/LSan
+    # catches leaks, double-frees, and use-after-free across the FFI seam.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Harness under AddressSanitizer + LeakSanitizer (with report)
+        shell: bash
+        run: |
+          mkdir -p reports
+          make leak-check 2>&1 | tee reports/asan-leak-check.txt
+          test "${PIPESTATUS[0]}" -eq 0
+      - name: Upload sanitizer report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-leak-check
+          path: reports/
+          retention-days: 30

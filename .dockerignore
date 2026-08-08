@@ -1,0 +1,8 @@
+# Only what the build needs enters the context: Go sources, C header/harness,
+# fixtures, Makefile, LICENSE/NOTICE. Docs and local state stay out.
+.git
+.github
+build/
+docs/
+*.md
+*.tar.gz

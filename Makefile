@@ -9,9 +9,12 @@ VERSION ?= 0.1.0
 MAJOR   := $(word 1,$(subst ., ,$(VERSION)))
 
 ifeq ($(OS),Windows_NT)
-  # Windows has no soname mechanism: the version rides the filename
-  # (libhelm_c-0.1.0.dll), with an unversioned copy for -lhelm_c linking.
-  LIB      := libhelm_c-$(VERSION).dll
+  # Windows has no soname mechanism. Build under the plain name — Go's linker
+  # writes the output name unquoted into the export .def's LIBRARY line, and
+  # GNU ld rejects dotted version names there ("syntax error"; known Go bug).
+  # The plain name is also the correct internal/load name; the versioned
+  # filename (libhelm_c-$(VERSION).dll) is produced as a copy for distribution.
+  LIB      := libhelm_c.dll
   SOFLAGS  :=
   HARNESS  := harness.exe
   PTHREAD  :=
@@ -40,7 +43,7 @@ build:
 	CGO_ENABLED=1 $(GO) build -buildmode=c-shared -ldflags "$(SOFLAGS)" -o $(BUILD)/$(LIB) ./capi
 	@rm -f $(BUILD)/*.h  # cgo-generated header; include/helm_c.h is the shipped one
 ifeq ($(OS),Windows_NT)
-	cp $(BUILD)/$(LIB) $(BUILD)/libhelm_c.dll
+	cp $(BUILD)/$(LIB) $(BUILD)/libhelm_c-$(VERSION).dll
 else ifeq ($(UNAME_S),Darwin)
 	ln -sf $(LIB) $(BUILD)/libhelm_c.$(MAJOR).dylib
 	ln -sf $(LIB) $(BUILD)/libhelm_c.dylib

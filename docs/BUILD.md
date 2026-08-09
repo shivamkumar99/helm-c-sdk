@@ -18,7 +18,8 @@ make build       # versioned shared library into build/ (VERSION=x.y.z, default 
                  #   macOS:   libhelm_c.<version>.dylib (install_name
                  #            @rpath/libhelm_c.<major>.dylib, current_version set)
                  #            + symlinks libhelm_c.<major>.dylib, libhelm_c.dylib
-                 #   windows: libhelm_c-<version>.dll + unversioned libhelm_c.dll copy
+                 #   windows: libhelm_c.dll (built + internal name) with a
+                 #   versioned libhelm_c-<version>.dll copy for distribution
                  # Multiple versions install side by side; link with -lhelm_c via
                  # the unversioned name, load at runtime via the major-versioned one.
 make test        # go vet + go test -race ./...

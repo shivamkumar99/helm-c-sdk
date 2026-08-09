@@ -44,6 +44,22 @@ jobs:
         # mingw 16.x ships binutils whose ld rejects Go's generated export_file.def
         # (c-shared DLL link fails with "syntax error"); pin the known-good release.
         run: choco install mingw --version=13.2.0 --allow-downgrade -y
+      - name: Put pinned mingw first on PATH (Windows)
+        if: runner.os == 'Windows'
+        # The runner image preinstalls a newer mingw at C:\mingw64 which would
+        # otherwise shadow the pinned one (GITHUB_PATH entries are prepended).
+        shell: bash
+        run: |
+          for d in "/c/ProgramData/mingw64/mingw64/bin" \
+                   "/c/ProgramData/chocolatey/lib/mingw/tools/install/mingw64/bin"; do
+            if [ -x "$d/gcc.exe" ]; then
+              cygpath -w "$d" >> "$GITHUB_PATH"
+              "$d/gcc.exe" --version | head -1
+              exit 0
+            fi
+          done
+          echo "pinned mingw gcc not found" >&2
+          exit 1
       - name: Test
         run: go test -race ./...
       - name: Build (versioned library)

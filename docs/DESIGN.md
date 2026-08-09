@@ -60,3 +60,21 @@ importable pure Go, usable directly by Go programs — with `pkg/cerrors` carryi
 public error-code taxonomy and `internal/handles` the registry. Test fixtures (charts,
 kubeconfig, PGP signing material) are generated at runtime by `internal/testfixtures`;
 the repository commits no test data.
+
+## Use of unsafe
+
+The `capi` package imports `unsafe` in exactly four places, all mandated by the
+cgo FFI contract and none reachable from library logic:
+
+1. `C.free(unsafe.Pointer(...))` (convert.go `freeCString`, logging.go) — the
+   only way to release memory allocated with `C.CString`; `C.free`'s signature
+   takes `unsafe.Pointer`. The pointers are our own allocations, freed exactly
+   once, never dereferenced afterward.
+2. `unsafe.Pointer` as an opaque user-data slot for the C log callback
+   (logging.go). The value is supplied by C, stored, and passed back verbatim —
+   Go never dereferences it.
+
+Security scanners flag any `unsafe` import (e.g. gosec G103); those findings are
+accepted-by-design here with inline `#nosec G103` annotations at each site. No
+pointer arithmetic, no type punning, and no `unsafe.Slice`/`unsafe.String`
+constructions from C-controlled lengths occur outside bounds-checked helpers.

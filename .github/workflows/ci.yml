@@ -20,8 +20,8 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
           cache: true
@@ -76,13 +76,13 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload test & coverage reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-${{ matrix.os }}
           path: reports/
           retention-days: 30
       - name: Upload library artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: helm-c-${{ matrix.os }}
           path: |
@@ -102,8 +102,8 @@ jobs:
       # bump deliberately.
       LLVM_MINGW_VERSION: "20250613"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: Install llvm-mingw
@@ -136,7 +136,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-windows-llvm
           path: reports/
@@ -145,11 +145,11 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@55c2c1448f86e01eaae002a5a3a9624417608d84 # v6
 
   sast:
     # Static analysis: gosec (Go security patterns) + govulncheck (known CVEs
@@ -160,8 +160,8 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       # Finding details go to FILES only, never stdout: on a public repo the
@@ -177,7 +177,7 @@ jobs:
       - name: Upload gosec SARIF to Security tab (maintainer-only view)
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
         with:
           sarif_file: reports/gosec.sarif
           category: gosec
@@ -191,7 +191,7 @@ jobs:
         # finding details are only stored while the repo is private; on a
         # public repo they live solely in the maintainer-only Security tab.
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-sast
           path: reports/
@@ -208,9 +208,9 @@ jobs:
       contents: read
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Codacy analysis (standalone, SARIF)
-        uses: codacy/codacy-analysis-cli-action@v4
+        uses: codacy/codacy-analysis-cli-action@562ee3e92b8e92df8b67e0a5ff8aa8e261919c08 # v4
         with:
           format: sarif
           output: codacy.sarif
@@ -221,18 +221,18 @@ jobs:
       - name: Upload Codacy SARIF to Security tab
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@c4dd10e44af883a891fe31ced449bcb4a6728b9b # v3
         with:
           sarif_file: codacy.sarif
           category: codacy
       - name: Upload Codacy report artifact (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-codacy
           path: codacy.sarif
           retention-days: 30
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         if: always()
         with:
           go-version-file: go.mod
@@ -254,8 +254,8 @@ jobs:
     # to file only; artifact stored while the repo is private.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: osv-scanner (findings to file)
@@ -268,7 +268,7 @@ jobs:
             || osv-scanner -r . > reports/osv-scanner.txt 2>&1
       - name: Upload osv report (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-osv
           path: reports/
@@ -281,7 +281,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
       - name: gitleaks (full history, redacted, findings to file)
@@ -305,7 +305,7 @@ jobs:
             > reports/trufflehog.txt 2>&1
       - name: Upload secrets report (private repo only)
         if: always() && github.event.repository.private
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-secrets
           path: reports/
@@ -321,10 +321,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build image (runs in-image test gate)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           load: true
@@ -333,14 +333,14 @@ jobs:
         run: docker run --rm helm-c-sdk:ci
       - name: Log in to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish to GHCR
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true
@@ -353,9 +353,9 @@ jobs:
     # chain answerability: exactly which modules and versions are inside.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Generate SBOM (syft, SPDX JSON)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: spdx-json
@@ -366,11 +366,11 @@ jobs:
     # kind cluster (local tests use the memory driver + fake kube clients).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
-      - uses: helm/kind-action@v1
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
       - name: Cluster lifecycle e2e (with report)
         shell: bash
         run: |
@@ -379,7 +379,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload e2e report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-kind-e2e
           path: reports/
@@ -390,8 +390,8 @@ jobs:
     # written to testdata/fuzz/ and uploaded so failures reproduce locally.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: Fuzz (strvals, chart archives, values)
@@ -405,7 +405,7 @@ jobs:
           done
       - name: Upload fuzz report (+ any failing inputs)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-fuzz
           path: |
@@ -418,8 +418,8 @@ jobs:
     # catches leaks, double-frees, and use-after-free across the FFI seam.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: go.mod
       - name: Harness under AddressSanitizer + LeakSanitizer (with report)
@@ -430,7 +430,7 @@ jobs:
           test "${PIPESTATUS[0]}" -eq 0
       - name: Upload sanitizer report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: reports-leak-check
           path: reports/

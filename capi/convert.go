@@ -52,9 +52,14 @@ func optionalGoString(s *C.char) string {
 }
 
 // freeCString releases a string previously allocated by C.CString. NULL-safe.
+//
+// unsafe justification: C.free takes unsafe.Pointer by definition — this is
+// the canonical cgo pattern for releasing C.CString memory and the pointer is
+// never dereferenced or retained on the Go side (see docs/DESIGN.md,
+// "Use of unsafe").
 func freeCString(s *C.char) {
 	if s != nil {
-		C.free(unsafe.Pointer(s))
+		C.free(unsafe.Pointer(s)) // #nosec G103 -- required by the C.free signature
 	}
 }
 

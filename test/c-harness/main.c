@@ -48,9 +48,15 @@ static const char* kubeconfig_yaml =
         }                                                           \
     } while (0)
 
+/* Upper bound for library-returned strings when length-checking; keeps
+ * string inspection bounded even if a returned buffer were unterminated
+ * (CWE-126). */
+#define HELMC_MAX_STR 4096
+
 static void test_versions(void) {
     char* v = helm_c_version();
-    CHECK(v != NULL && strlen(v) > 0, "helm_c_version returns a string");
+    CHECK(v != NULL && strnlen(v, HELMC_MAX_STR) > 0,
+          "helm_c_version returns a string");
     char* sdk = helm_sdk_version();
     CHECK(sdk != NULL && strncmp(sdk, "v4.", 3) == 0,
           "helm_sdk_version reports the pinned v4 release");
@@ -117,20 +123,8 @@ static void test_chart_load_missing(void) {
     helm_free_string(err);
 }
 
-/* Full chart lifecycle against the chart authored earlier in the run. */
-static void test_chart_lifecycle(void) {
-    const char* fixture = g_chart_dir;
-    if (fixture == NULL) {
-        printf("skip: no authored chart — chart lifecycle not exercised\n");
-        return;
-    }
-
-    helm_handle_t h = 0;
-    char* err = NULL;
-    CHECK(helm_chart_load(fixture, &h, &err) == HELM_OK, "authored chart loads");
-    if (err) { fprintf(stderr, "  load error: %s\n", err); helm_free_string(err); }
-    CHECK(h != 0, "chart handle issued");
-
+/* Chart inspection: metadata, values, lint, and value merging. */
+static void chart_inspection_checks(helm_handle_t h, const char* fixture) {
     char* meta = NULL;
     CHECK(helm_chart_metadata(h, &meta, NULL) == HELM_OK, "metadata retrieved");
     CHECK(meta != NULL && strstr(meta, "harnesschart") != NULL,
@@ -155,7 +149,10 @@ static void test_chart_lifecycle(void) {
     CHECK(merged != NULL && strstr(merged, "\"replicaCount\":9") != NULL,
           "override wins in merged values");
     helm_free_string(merged);
+}
 
+/* Offline rendering: schema validation, render, and option validation. */
+static void chart_render_checks(helm_handle_t h) {
     CHECK(helm_schema_validate(h, NULL, NULL) == HELM_OK,
           "schema validation passes (chart has no schema)");
 
@@ -172,6 +169,24 @@ static void test_chart_lifecycle(void) {
               == HELM_ERR_INVALID_ARG,
           "unknown render option key rejected");
     helm_free_string(rerr);
+}
+
+/* Full chart lifecycle against the chart authored earlier in the run. */
+static void test_chart_lifecycle(void) {
+    const char* fixture = g_chart_dir;
+    if (fixture == NULL) {
+        printf("skip: no authored chart — chart lifecycle not exercised\n");
+        return;
+    }
+
+    helm_handle_t h = 0;
+    char* err = NULL;
+    CHECK(helm_chart_load(fixture, &h, &err) == HELM_OK, "authored chart loads");
+    if (err) { fprintf(stderr, "  load error: %s\n", err); helm_free_string(err); }
+    CHECK(h != 0, "chart handle issued");
+
+    chart_inspection_checks(h, fixture);
+    chart_render_checks(h);
 
     CHECK(helm_chart_free(h, NULL) == HELM_OK, "chart freed");
     CHECK(helm_chart_free(h, NULL) == HELM_ERR_INVALID_HANDLE,
@@ -293,28 +308,36 @@ static void test_chart_verify(void) {
     helm_free_string(err);
 }
 
-static void test_config_and_context(void) {
+/* Writes the dummy fixture kubeconfig into HELMC_WORK_DIR. Returns 1 and
+ * fills dst on success; 0 when the workdir is unset/unusable.
+ * workdir comes from our own Makefile/CI (mktemp -d); reject anything
+ * that walks out of it, and create the file owner-only (0600).
+ * A cpp/path-injection finding remains here by design: this is a test
+ * harness intentionally writing a dummy fixture inside its own
+ * environment-supplied scratch directory. */
+static int write_fixture_kubeconfig(char* dst, size_t cap) {
     const char* workdir = getenv("HELMC_WORK_DIR");
+    if (workdir == NULL || workdir[0] == '\0' || strstr(workdir, "..") != NULL) {
+        return 0;
+    }
+    snprintf(dst, cap, "%s/kubeconfig.yaml", workdir);
+    FILE* f = NULL;
+#ifndef _WIN32
+    int fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd >= 0) { f = fdopen(fd, "w"); }
+#else
+    f = fopen(dst, "w");
+#endif
+    int ok = (f != NULL && fputs(kubeconfig_yaml, f) != EOF);
+    if (f != NULL) { fclose(f); }
+    return ok;
+}
+
+static void test_config_and_context(void) {
     char kubeconfig[512];
     kubeconfig[0] = '\0';
-    /* workdir comes from our own Makefile/CI (mktemp -d); reject anything
-     * that walks out of it, and create the file owner-only (0600).
-     * A cpp/path-injection finding remains on this line by design: this is
-     * a test harness intentionally writing a dummy fixture inside its own
-     * environment-supplied scratch directory. */
-    if (workdir != NULL && workdir[0] != '\0' && strstr(workdir, "..") == NULL) {
-        snprintf(kubeconfig, sizeof(kubeconfig), "%s/kubeconfig.yaml", workdir);
-        FILE* f = NULL;
-#ifndef _WIN32
-        int fd = open(kubeconfig, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-        if (fd >= 0) { f = fdopen(fd, "w"); }
-#else
-        f = fopen(kubeconfig, "w");
-#endif
-        if (f == NULL || fputs(kubeconfig_yaml, f) == EOF) {
-            kubeconfig[0] = '\0';
-        }
-        if (f != NULL) { fclose(f); }
+    if (!write_fixture_kubeconfig(kubeconfig, sizeof(kubeconfig))) {
+        kubeconfig[0] = '\0';
     }
     if (kubeconfig[0] == '\0') {
         printf("skip: HELMC_WORK_DIR not set — config lifecycle not exercised\n");

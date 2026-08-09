@@ -131,26 +131,30 @@ func WriteKubeconfig(dir string) (string, error) {
 	return path, os.WriteFile(path, []byte(KubeconfigYAML), 0o600)
 }
 
-// GenerateSigning creates a signed chart archive, its .prov provenance file,
-// and a public keyring under dir (a throwaway PGP key generated per call):
-// <dir>/testchart-0.1.0.tgz, .tgz.prov, and pubring.gpg.
-func GenerateSigning(dir string) error {
+// packageFixtureChart authors and packages the test chart under dir and
+// returns the .tgz path.
+func packageFixtureChart(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return err
+		return "", err
 	}
 	chartDir, err := WriteTestChart(dir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	c, err := loader.Load(chartDir)
 	if err != nil {
-		return err
+		return "", err
 	}
 	tgz, err := chartutil.Save(c, dir)
 	if err != nil {
-		return fmt.Errorf("packaging signing fixture: %w", err)
+		return "", fmt.Errorf("packaging signing fixture: %w", err)
 	}
+	return tgz, nil
+}
 
+// signFixtureArchive clear-signs tgz with a throwaway key, writing
+// <tgz>.prov and <dir>/pubring.gpg.
+func signFixtureArchive(dir, tgz string) error {
 	entity, err := openpgp.NewEntity("helm-c-sdk-test", "throwaway test-only key", "test@invalid", nil)
 	if err != nil {
 		return fmt.Errorf("generating test key: %w", err)
@@ -175,4 +179,15 @@ func GenerateSigning(dir string) error {
 		return fmt.Errorf("serializing public key: %w", err)
 	}
 	return os.WriteFile(filepath.Join(dir, "pubring.gpg"), pub.Bytes(), 0o600)
+}
+
+// GenerateSigning creates a signed chart archive, its .prov provenance file,
+// and a public keyring under dir (a throwaway PGP key generated per call):
+// <dir>/testchart-0.1.0.tgz, .tgz.prov, and pubring.gpg.
+func GenerateSigning(dir string) error {
+	tgz, err := packageFixtureChart(dir)
+	if err != nil {
+		return err
+	}
+	return signFixtureArchive(dir, tgz)
 }

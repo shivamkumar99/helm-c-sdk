@@ -68,7 +68,7 @@ func helm_chart_verify(path *C.char, provFile *C.char, keyring *C.char, out **C.
 //
 //export helm_get_metadata
 func helm_get_metadata(cfgH C.uint64_t, name *C.char, optsJSON *C.char, out **C.char, errOut **C.char) C.int32_t {
-	return releaseAction(cfgH, name, optsJSON, out, errOut, func(cfgObj any, name, optsJSON string) (string, error) {
+	return releaseAction(releaseShimArgs{cfgH, name, optsJSON, out, errOut}, func(cfgObj any, name, optsJSON string) (string, error) {
 		opts, err := wrapper.ParseGetMetadataOptions(optsJSON)
 		if err != nil {
 			return "", err

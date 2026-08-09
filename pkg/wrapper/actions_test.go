@@ -51,16 +51,20 @@ type summaryJSON struct {
 	Manifest     string `json:"manifest"`
 }
 
-func TestReleaseLifecycle(t *testing.T) {
-	cfg := newMemoryConfig(t)
-	chart := loadFixtureChart(t)
-	ctx := context.Background()
+// mustSummary decodes a release-summary JSON payload or fails the test.
+func mustSummary(t *testing.T, out string) summaryJSON {
+	t.Helper()
+	var s summaryJSON
+	require.NoError(t, json.Unmarshal([]byte(out), &s))
+	return s
+}
 
-	// Install revision 1.
+// lifecycleInstallStage installs revision 1 and verifies install + status.
+func lifecycleInstallStage(t *testing.T, ctx context.Context, cfg, chart any) {
+	t.Helper()
 	out, err := InstallRelease(ctx, cfg, chart, "", "life-rel", `{"replicaCount":2}`, InstallOptions{})
 	require.NoError(t, err)
-	var rel summaryJSON
-	require.NoError(t, json.Unmarshal([]byte(out), &rel))
+	rel := mustSummary(t, out)
 	assert.Equal(t, "life-rel", rel.Name)
 	assert.Equal(t, "default", rel.Namespace)
 	assert.Equal(t, 1, rel.Revision)
@@ -68,40 +72,41 @@ func TestReleaseLifecycle(t *testing.T) {
 	assert.Equal(t, "testchart", rel.ChartName)
 	assert.Contains(t, rel.Manifest, `replicas: "2"`)
 
-	// Status agrees.
 	out, err = StatusRelease(cfg, "life-rel", StatusOptions{})
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &rel))
-	assert.Equal(t, 1, rel.Revision)
+	assert.Equal(t, 1, mustSummary(t, out).Revision)
+}
 
-	// Upgrade to revision 2 with new values.
-	out, err = UpgradeRelease(ctx, cfg, chart, "", "life-rel", `{"replicaCount":5}`, UpgradeOptions{})
+// lifecycleUpgradeStage upgrades to revision 2 and verifies values + history.
+func lifecycleUpgradeStage(t *testing.T, ctx context.Context, cfg, chart any) {
+	t.Helper()
+	out, err := UpgradeRelease(ctx, cfg, chart, "", "life-rel", `{"replicaCount":5}`, UpgradeOptions{})
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &rel))
+	rel := mustSummary(t, out)
 	assert.Equal(t, 2, rel.Revision)
 	assert.Contains(t, rel.Manifest, `replicas: "5"`)
 
-	// User-supplied values round-trip.
 	out, err = GetReleaseValues(cfg, "life-rel", GetValuesOptions{})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"replicaCount":5}`, out)
 
-	// History shows both revisions.
 	out, err = HistoryRelease(cfg, "life-rel", HistoryOptions{})
 	require.NoError(t, err)
 	var hist []summaryJSON
 	require.NoError(t, json.Unmarshal([]byte(out), &hist))
 	assert.Len(t, hist, 2)
+}
 
-	// Rollback to revision 1 creates revision 3.
+// lifecycleRollbackStage rolls back to revision 1 and verifies status + list.
+func lifecycleRollbackStage(t *testing.T, cfg any) {
+	t.Helper()
 	require.NoError(t, RollbackRelease(cfg, "life-rel", RollbackOptions{Version: 1}))
-	out, err = StatusRelease(cfg, "life-rel", StatusOptions{})
+	out, err := StatusRelease(cfg, "life-rel", StatusOptions{})
 	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &rel))
+	rel := mustSummary(t, out)
 	assert.Equal(t, 3, rel.Revision)
 	assert.Contains(t, rel.Manifest, `replicas: "2"`, "rollback restored revision-1 values")
 
-	// List shows the deployed release.
 	out, err = ListReleases(cfg, ListOptions{})
 	require.NoError(t, err)
 	var list []summaryJSON
@@ -109,9 +114,24 @@ func TestReleaseLifecycle(t *testing.T) {
 	require.Len(t, list, 1)
 	assert.Equal(t, "life-rel", list[0].Name)
 	assert.Empty(t, list[0].Manifest, "list summaries exclude manifests")
+}
 
-	// Uninstall.
-	out, err = UninstallRelease(cfg, "life-rel", UninstallOptions{})
+func TestReleaseLifecycle(t *testing.T) {
+	cfg := newMemoryConfig(t)
+	chart := loadFixtureChart(t)
+	ctx := context.Background()
+
+	lifecycleInstallStage(t, ctx, cfg, chart)
+	lifecycleUpgradeStage(t, ctx, cfg, chart)
+	lifecycleRollbackStage(t, cfg)
+
+	lifecycleUninstallStage(t, cfg)
+}
+
+// lifecycleUninstallStage uninstalls and verifies the release is gone.
+func lifecycleUninstallStage(t *testing.T, cfg any) {
+	t.Helper()
+	out, err := UninstallRelease(cfg, "life-rel", UninstallOptions{})
 	require.NoError(t, err)
 	var uninst struct {
 		Release summaryJSON `json:"release"`
@@ -119,9 +139,9 @@ func TestReleaseLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &uninst))
 	assert.Equal(t, "uninstalled", uninst.Release.Status)
 
-	// Gone from the default list.
 	out, err = ListReleases(cfg, ListOptions{})
 	require.NoError(t, err)
+	var list []summaryJSON
 	require.NoError(t, json.Unmarshal([]byte(out), &list))
 	assert.Empty(t, list)
 }

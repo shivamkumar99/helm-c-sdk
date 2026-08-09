@@ -81,36 +81,48 @@ func ParseConfigOptions(optsJSON string) (ConfigOptions, error) {
 // the project rules) — set the handler before creating configs. Building the
 // config parses options but does not contact the cluster; the first action
 // does (kubeconfig loading is lazy).
-func NewConfig(opts ConfigOptions) (*Config, error) {
-	if opts.KubeconfigPath != "" && opts.KubeconfigContent != "" {
-		return nil, cerrors.New(cerrors.CodeInvalidArg,
-			"kubeconfig_path and kubeconfig_content are mutually exclusive")
+// writeTempKubeconfig persists inline kubeconfig content to an owner-only
+// (0600) temp file and returns its path. The caller owns removal.
+func writeTempKubeconfig(content string) (string, error) {
+	f, err := os.CreateTemp("", "helm-c-kubeconfig-*")
+	if err != nil {
+		return "", cerrors.WithCode(cerrors.CodeIO, err)
 	}
+	path := f.Name()
+	writeErr := os.Chmod(path, 0o600)
+	if writeErr == nil {
+		_, writeErr = f.WriteString(content)
+	}
+	if closeErr := f.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		removeBestEffort(path)
+		return "", cerrors.WithCode(cerrors.CodeIO, writeErr)
+	}
+	return path, nil
+}
 
-	settings := cli.New()
-	tempKubeconfig := ""
-	if opts.KubeconfigContent != "" {
-		f, err := os.CreateTemp("", "helm-c-kubeconfig-*")
+// resolveKubeconfig points settings at the requested kubeconfig source and
+// returns the temp-file path when inline content was materialized (the caller
+// owns its removal).
+func resolveKubeconfig(settings *cli.EnvSettings, opts ConfigOptions) (string, error) {
+	switch {
+	case opts.KubeconfigContent != "":
+		path, err := writeTempKubeconfig(opts.KubeconfigContent)
 		if err != nil {
-			return nil, cerrors.WithCode(cerrors.CodeIO, err)
+			return "", err
 		}
-		tempKubeconfig = f.Name()
-		writeErr := os.Chmod(tempKubeconfig, 0o600)
-		if writeErr == nil {
-			_, writeErr = f.WriteString(opts.KubeconfigContent)
-		}
-		if closeErr := f.Close(); writeErr == nil {
-			writeErr = closeErr
-		}
-		if writeErr != nil {
-			removeBestEffort(tempKubeconfig)
-			return nil, cerrors.WithCode(cerrors.CodeIO, writeErr)
-		}
-		settings.KubeConfig = tempKubeconfig
-	} else if opts.KubeconfigPath != "" {
+		settings.KubeConfig = path
+		return path, nil
+	case opts.KubeconfigPath != "":
 		settings.KubeConfig = opts.KubeconfigPath
 	}
+	return "", nil
+}
 
+// applyKubeSettings copies the connection options onto the CLI settings.
+func applyKubeSettings(settings *cli.EnvSettings, opts ConfigOptions) {
 	settings.KubeContext = opts.KubeContext
 	settings.KubeToken = opts.KubeToken
 	settings.KubeAPIServer = opts.KubeAPIServer
@@ -125,6 +137,20 @@ func NewConfig(opts ConfigOptions) (*Config, error) {
 	if opts.QPS > 0 {
 		settings.QPS = float32(opts.QPS)
 	}
+}
+
+func NewConfig(opts ConfigOptions) (*Config, error) {
+	if opts.KubeconfigPath != "" && opts.KubeconfigContent != "" {
+		return nil, cerrors.New(cerrors.CodeInvalidArg,
+			"kubeconfig_path and kubeconfig_content are mutually exclusive")
+	}
+
+	settings := cli.New()
+	tempKubeconfig, err := resolveKubeconfig(settings, opts)
+	if err != nil {
+		return nil, err
+	}
+	applyKubeSettings(settings, opts)
 
 	namespace := opts.Namespace
 	if namespace == "" {

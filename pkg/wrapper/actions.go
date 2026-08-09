@@ -10,6 +10,7 @@ import (
 	"helm.sh/helm/v4/pkg/cli"
 	"helm.sh/helm/v4/pkg/kube"
 	"helm.sh/helm/v4/pkg/registry"
+	"helm.sh/helm/v4/pkg/release"
 	"helm.sh/helm/v4/pkg/storage/driver"
 
 	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
@@ -93,18 +94,66 @@ func checkNotCancelled(ctx context.Context) error {
 	return nil
 }
 
+// actionPrologue is the shared entry sequence of install/upgrade: cancellation
+// guard, config recovery, and values decoding.
+func actionPrologue(ctx context.Context, cfgObj any, valuesJSON string) (*Config, map[string]any, error) {
+	if err := checkNotCancelled(ctx); err != nil {
+		return nil, nil, err
+	}
+	cfg, err := AsConfig(cfgObj)
+	if err != nil {
+		return nil, nil, err
+	}
+	vals, err := unmarshalValues(valuesJSON)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cfg, vals, nil
+}
+
+// runTargets points at the option fields install and upgrade share; apply
+// copies the option values in with the documented defaulting rules.
+type runTargets struct {
+	namespace *string
+	timeout   *time.Duration
+	wait      *kube.WaitStrategy
+	dryRun    *action.DryRunStrategy
+}
+
+func (t runTargets) apply(cfg *Config, namespace string, timeoutSeconds int, wait, dryRun string) {
+	*t.namespace = namespace
+	if *t.namespace == "" {
+		*t.namespace = cfg.Namespace
+	}
+	if timeoutSeconds > 0 {
+		*t.timeout = time.Duration(timeoutSeconds) * time.Second
+	}
+	if wait != "" {
+		*t.wait = kube.WaitStrategy(wait)
+	}
+	if dryRun != "" {
+		*t.dryRun = action.DryRunStrategy(dryRun)
+	}
+}
+
+// finishRelease is the shared exit sequence of install/upgrade: error mapping
+// and summary marshalling.
+func finishRelease(rel release.Releaser, err error) (string, error) {
+	if err != nil {
+		return "", wrapActionError(err, cerrors.CodeRelease)
+	}
+	s, err := summarizeRelease(rel, true)
+	if err != nil {
+		return "", err
+	}
+	return marshalJSON(s)
+}
+
 // InstallRelease installs a chart (loaded handle object, or chartRef when
 // chartObj is nil) as name and returns the release summary JSON (with
 // manifest). ctx cancels the operation (HELM_ERR_CANCELLED).
 func InstallRelease(ctx context.Context, cfgObj, chartObj any, chartRef, name, valuesJSON string, opts InstallOptions) (string, error) {
-	if err := checkNotCancelled(ctx); err != nil {
-		return "", err
-	}
-	cfg, err := AsConfig(cfgObj)
-	if err != nil {
-		return "", err
-	}
-	vals, err := unmarshalValues(valuesJSON)
+	cfg, vals, err := actionPrologue(ctx, cfgObj, valuesJSON)
 	if err != nil {
 		return "", err
 	}
@@ -118,33 +167,15 @@ func InstallRelease(ctx context.Context, cfgObj, chartObj any, chartRef, name, v
 		return "", err
 	}
 	inst.ReleaseName = name
-	inst.Namespace = opts.Namespace
-	if inst.Namespace == "" {
-		inst.Namespace = cfg.Namespace
-	}
-	if opts.TimeoutSeconds > 0 {
-		inst.Timeout = time.Duration(opts.TimeoutSeconds) * time.Second
-	}
-	if opts.Wait != "" {
-		inst.WaitStrategy = kube.WaitStrategy(opts.Wait)
-	}
-	if opts.DryRun != "" {
-		inst.DryRunStrategy = action.DryRunStrategy(opts.DryRun)
-	}
+	runTargets{&inst.Namespace, &inst.Timeout, &inst.WaitStrategy, &inst.DryRunStrategy}.
+		apply(cfg, opts.Namespace, opts.TimeoutSeconds, opts.Wait, opts.DryRun)
 	inst.CreateNamespace = opts.CreateNamespace
 	inst.RollbackOnFailure = opts.RollbackOnFailure
 	inst.Description = opts.Description
 	inst.Labels = opts.Labels
 
 	rel, err := inst.RunWithContext(ctx, c, vals)
-	if err != nil {
-		return "", wrapActionError(err, cerrors.CodeRelease)
-	}
-	s, err := summarizeRelease(rel, true)
-	if err != nil {
-		return "", err
-	}
-	return marshalJSON(s)
+	return finishRelease(rel, err)
 }
 
 // UpgradeOptions is the JSON options contract of helm_upgrade. Keys are ABI:
@@ -176,14 +207,7 @@ func ParseUpgradeOptions(optsJSON string) (UpgradeOptions, error) {
 // when chartObj is nil) and returns the release summary JSON (with manifest).
 // ctx cancels the operation.
 func UpgradeRelease(ctx context.Context, cfgObj, chartObj any, chartRef, name, valuesJSON string, opts UpgradeOptions) (string, error) {
-	if err := checkNotCancelled(ctx); err != nil {
-		return "", err
-	}
-	cfg, err := AsConfig(cfgObj)
-	if err != nil {
-		return "", err
-	}
-	vals, err := unmarshalValues(valuesJSON)
+	cfg, vals, err := actionPrologue(ctx, cfgObj, valuesJSON)
 	if err != nil {
 		return "", err
 	}
@@ -196,19 +220,8 @@ func UpgradeRelease(ctx context.Context, cfgObj, chartObj any, chartRef, name, v
 	if err != nil {
 		return "", err
 	}
-	up.Namespace = opts.Namespace
-	if up.Namespace == "" {
-		up.Namespace = cfg.Namespace
-	}
-	if opts.TimeoutSeconds > 0 {
-		up.Timeout = time.Duration(opts.TimeoutSeconds) * time.Second
-	}
-	if opts.Wait != "" {
-		up.WaitStrategy = kube.WaitStrategy(opts.Wait)
-	}
-	if opts.DryRun != "" {
-		up.DryRunStrategy = action.DryRunStrategy(opts.DryRun)
-	}
+	runTargets{&up.Namespace, &up.Timeout, &up.WaitStrategy, &up.DryRunStrategy}.
+		apply(cfg, opts.Namespace, opts.TimeoutSeconds, opts.Wait, opts.DryRun)
 	up.MaxHistory = opts.MaxHistory
 	up.ResetValues = opts.ResetValues
 	up.ReuseValues = opts.ReuseValues
@@ -218,14 +231,7 @@ func UpgradeRelease(ctx context.Context, cfgObj, chartObj any, chartRef, name, v
 	up.Labels = opts.Labels
 
 	rel, err := up.RunWithContext(ctx, name, c, vals)
-	if err != nil {
-		return "", wrapActionError(err, cerrors.CodeRelease)
-	}
-	s, err := summarizeRelease(rel, true)
-	if err != nil {
-		return "", err
-	}
-	return marshalJSON(s)
+	return finishRelease(rel, err)
 }
 
 // UninstallOptions is the JSON options contract of helm_uninstall. Keys are

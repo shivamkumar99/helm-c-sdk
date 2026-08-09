@@ -41,7 +41,9 @@ jobs:
           go-version-file: go.mod
       - name: Install mingw-w64 (Windows)
         if: runner.os == 'Windows'
-        run: choco install mingw -y
+        # mingw 16.x ships binutils whose ld rejects Go's generated export_file.def
+        # (c-shared DLL link fails with "syntax error"); pin the known-good release.
+        run: choco install mingw --version=13.2.0 --allow-downgrade -y
       - name: Test
         run: go test -race ./...
       - name: Build (versioned library)

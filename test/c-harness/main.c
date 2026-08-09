@@ -351,7 +351,9 @@ static void test_config_and_context(void) {
     if (kubeconfig[0] == '\0') {
         printf("skip: HELMC_WORK_DIR not set — config lifecycle not exercised\n");
     } else {
-        char opts[512];
+        /* Sized for the worst case gcc computes under -Wformat-truncation:
+         * kubeconfig (<= 511 bytes) + the JSON wrapper (48) + NUL. */
+        char opts[640];
         snprintf(opts, sizeof(opts),
                  "{\"kubeconfig_path\":\"%s\",\"storage_driver\":\"memory\"}",
                  kubeconfig);

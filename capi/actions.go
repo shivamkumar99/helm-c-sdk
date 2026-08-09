@@ -40,9 +40,20 @@ type chartShimArgs struct {
 	errOut                               **C.char
 }
 
+// chartRunInputs carries the decoded Go-side inputs of a chart action from
+// the shim to its use-case callback.
+type chartRunInputs struct {
+	ctx        context.Context
+	cfgObj     any
+	chartObj   any
+	chartRef   string
+	name       string
+	valuesJSON string
+	optsJSON   string
+}
+
 // chartActionShim is the shared body of helm_install and helm_upgrade.
-func chartActionShim(a chartShimArgs,
-	run func(ctx context.Context, cfgObj, chartObj any, chartRef, name, valuesJSON, optsJSON string) (string, error)) (code C.int32_t) {
+func chartActionShim(a chartShimArgs, run func(in chartRunInputs) (string, error)) (code C.int32_t) {
 	clearErrorOut(a.errOut)
 	defer recoverToCode(&code, a.errOut)
 	if a.name == nil || a.out == nil {
@@ -56,8 +67,15 @@ func chartActionShim(a chartShimArgs,
 	if err != nil {
 		return failure(a.errOut, err)
 	}
-	result, err := run(ctx, cfgObj, chartObj, optionalGoString(a.chartRef),
-		C.GoString(a.name), optionalGoString(a.valuesJSON), optionalGoString(a.optsJSON))
+	result, err := run(chartRunInputs{
+		ctx:        ctx,
+		cfgObj:     cfgObj,
+		chartObj:   chartObj,
+		chartRef:   optionalGoString(a.chartRef),
+		name:       C.GoString(a.name),
+		valuesJSON: optionalGoString(a.valuesJSON),
+		optsJSON:   optionalGoString(a.optsJSON),
+	})
 	if err != nil {
 		return failure(a.errOut, err)
 	}
@@ -79,12 +97,12 @@ func chartActionShim(a chartShimArgs,
 func helm_install(cfgH, ctxH, chartH C.uint64_t, chartRef *C.char, name *C.char, valuesJSON *C.char, optsJSON *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
 	return chartActionShim(
 		chartShimArgs{cfgH, ctxH, chartH, chartRef, name, valuesJSON, optsJSON, out, errOut},
-		func(ctx context.Context, cfgObj, chartObj any, chartRef, name, valuesJSON, optsJSON string) (string, error) {
-			opts, err := wrapper.ParseInstallOptions(optsJSON)
+		func(in chartRunInputs) (string, error) {
+			opts, err := wrapper.ParseInstallOptions(in.optsJSON)
 			if err != nil {
 				return "", err
 			}
-			return wrapper.InstallRelease(ctx, cfgObj, chartObj, chartRef, name, valuesJSON, opts)
+			return wrapper.InstallRelease(in.ctx, in.cfgObj, in.chartObj, in.chartRef, in.name, in.valuesJSON, opts)
 		})
 }
 
@@ -98,12 +116,12 @@ func helm_install(cfgH, ctxH, chartH C.uint64_t, chartRef *C.char, name *C.char,
 func helm_upgrade(cfgH, ctxH, chartH C.uint64_t, chartRef *C.char, name *C.char, valuesJSON *C.char, optsJSON *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
 	return chartActionShim(
 		chartShimArgs{cfgH, ctxH, chartH, chartRef, name, valuesJSON, optsJSON, out, errOut},
-		func(ctx context.Context, cfgObj, chartObj any, chartRef, name, valuesJSON, optsJSON string) (string, error) {
-			opts, err := wrapper.ParseUpgradeOptions(optsJSON)
+		func(in chartRunInputs) (string, error) {
+			opts, err := wrapper.ParseUpgradeOptions(in.optsJSON)
 			if err != nil {
 				return "", err
 			}
-			return wrapper.UpgradeRelease(ctx, cfgObj, chartObj, chartRef, name, valuesJSON, opts)
+			return wrapper.UpgradeRelease(in.ctx, in.cfgObj, in.chartObj, in.chartRef, in.name, in.valuesJSON, opts)
 		})
 }
 

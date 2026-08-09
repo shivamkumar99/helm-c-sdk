@@ -89,10 +89,10 @@ func (h *cLogHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 	msg := C.CString(b.String())
 	C.helmc_invoke_log_cb(cb, cLevel(r.Level), msg, ud)
-	// unsafe justification: releasing our own C.CString allocation after the
-	// synchronous callback returns; C.free requires unsafe.Pointer (see
+	// Released after the synchronous callback returns, through the one
+	// audited unsafe.Pointer site (convert.go freeCString; see
 	// docs/DESIGN.md, "Use of unsafe").
-	C.free(unsafe.Pointer(msg)) // #nosec G103 -- required by the C.free signature
+	freeCString(msg)
 	return nil
 }
 

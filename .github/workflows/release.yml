@@ -109,6 +109,16 @@ jobs:
           mkdir -p extracted scan
           for t in dist/*.tar.gz; do tar -xzf "$t" -C extracted; done
           clamscan -r --infected dist/ extracted/ | tee scan/clamav.txt
+      - name: Stage standalone libraries + header for direct download
+        # Besides the tarballs, attach each platform's library and the C
+        # header as individual release assets, so consumers can grab exactly
+        # the .so/.dylib/.dll + helm_c.h they need without unpacking.
+        run: |
+          VER=${REL_VERSION#v}
+          cp "extracted/helm-c-linux-amd64/libhelm_c.so.${VER}" "dist/libhelm_c-${VER}-linux-amd64.so"
+          cp "extracted/helm-c-darwin-arm64/libhelm_c.${VER}.dylib" "dist/libhelm_c-${VER}-darwin-arm64.dylib"
+          cp "extracted/helm-c-windows-amd64/libhelm_c.dll" "dist/libhelm_c-${VER}-windows-amd64.dll"
+          cp include/helm_c.h dist/helm_c.h
       - name: Generate SBOM (SPDX JSON)
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
@@ -116,15 +126,20 @@ jobs:
           format: spdx-json
           output-file: dist/helm-c-sdk.sbom.spdx.json
           upload-artifact: false
-      - name: Generate SHA-256 checksums
+      - name: Generate SHA-256 checksums (archives + standalone assets)
         run: |
-          cd dist && sha256sum *.tar.gz > sha256sums.txt && cat sha256sums.txt
+          cd dist && sha256sum *.tar.gz *.so *.dylib *.dll helm_c.h > sha256sums.txt \
+            && cat sha256sums.txt
       - name: Upload scanned artifacts + checksums
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: dist-scanned
           path: |
             dist/*.tar.gz
+            dist/*.so
+            dist/*.dylib
+            dist/*.dll
+            dist/helm_c.h
             dist/sha256sums.txt
             dist/helm-c-sdk.sbom.spdx.json
             scan/clamav.txt
@@ -147,6 +162,10 @@ jobs:
           generate_release_notes: true
           files: |
             release/dist/*.tar.gz
+            release/dist/*.so
+            release/dist/*.dylib
+            release/dist/*.dll
+            release/dist/helm_c.h
             release/dist/sha256sums.txt
             release/dist/helm-c-sdk.sbom.spdx.json
             release/scan/clamav.txt

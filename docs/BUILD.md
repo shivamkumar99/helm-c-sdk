@@ -42,6 +42,17 @@ cc myapp.c -I <helm-c>/include -L <helm-c>/build -lhelm_c
 #   windows: PATH=<helm-c>\build;%PATH%
 ```
 
+## Release downloads
+
+Each tagged release attaches, per platform, both a full tarball
+(`helm-c-<version>-<platform>.tar.gz`: library + `helm_c.h` + pkg-config file +
+docs + LICENSE/NOTICE) and **standalone files for direct download** —
+`libhelm_c-<version>-linux-amd64.so`, `libhelm_c-<version>-darwin-arm64.dylib`,
+`libhelm_c-<version>-windows-amd64.dll`, and `helm_c.h` — plus
+`sha256sums.txt` (covering every asset), an SPDX SBOM, and the ClamAV scan log.
+To consume the library you need exactly two files: the platform's library and
+`helm_c.h`.
+
 ## Building for a platform without a release
 
 `make build` works on every platform Go supports, so an unsupported architecture or libc

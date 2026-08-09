@@ -128,12 +128,20 @@ func (t runTargets) apply(cfg *Config, namespace string, timeoutSeconds int, wai
 	if timeoutSeconds > 0 {
 		*t.timeout = time.Duration(timeoutSeconds) * time.Second
 	}
-	if wait != "" {
-		*t.wait = kube.WaitStrategy(wait)
-	}
+	*t.wait = defaultWaitStrategy(wait)
 	if dryRun != "" {
 		*t.dryRun = action.DryRunStrategy(dryRun)
 	}
+}
+
+// defaultWaitStrategy maps an empty opts "wait" to hookOnly — the helm CLI
+// default. The SDK errors on an unset strategy against a real cluster
+// ("wait strategy not set"), so leaving it empty is never valid.
+func defaultWaitStrategy(wait string) kube.WaitStrategy {
+	if wait == "" {
+		return kube.HookOnlyStrategy
+	}
+	return kube.WaitStrategy(wait)
 }
 
 // finishRelease is the shared exit sequence of install/upgrade: error mapping
@@ -264,9 +272,7 @@ func UninstallRelease(cfgObj any, name string, opts UninstallOptions) (string, e
 	}
 	u.DryRun = opts.DryRun
 	u.IgnoreNotFound = opts.IgnoreNotFound
-	if opts.Wait != "" {
-		u.WaitStrategy = kube.WaitStrategy(opts.Wait)
-	}
+	u.WaitStrategy = defaultWaitStrategy(opts.Wait)
 	u.Description = opts.Description
 
 	resp, err := u.Run(name)
@@ -310,9 +316,7 @@ func RollbackRelease(cfgObj any, name string, opts RollbackOptions) error {
 	if opts.TimeoutSeconds > 0 {
 		rb.Timeout = time.Duration(opts.TimeoutSeconds) * time.Second
 	}
-	if opts.Wait != "" {
-		rb.WaitStrategy = kube.WaitStrategy(opts.Wait)
-	}
+	rb.WaitStrategy = defaultWaitStrategy(opts.Wait)
 	if opts.DryRun != "" {
 		rb.DryRunStrategy = action.DryRunStrategy(opts.DryRun)
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -29,7 +30,11 @@ func TestNewConfigInlineKubeconfigContent(t *testing.T) {
 	require.NotEmpty(t, cfg.tempKubeconfig)
 	info, err := os.Stat(cfg.tempKubeconfig)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		// Windows has no POSIX permission bits: Chmod only toggles the
+		// read-only flag and Stat reports 0666 for writable files.
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 
 	// ...and Close removes it, idempotently.
 	path := cfg.tempKubeconfig

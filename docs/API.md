@@ -343,6 +343,9 @@ int32_t helm_registry_logout(helm_handle_t client, const char* host, char** erro
 Basic-auth login/logout against a registry host (e.g. `"localhost:5000"`,
 `"registry-1.docker.io"`). Login `opts_json` keys: `insecure` (skip TLS verification),
 `plain_http`. Credentials persist in the client's credentials file until logout.
+Logging out of a host with no stored credentials is environment-dependent: a
+file-backed credential store treats it as a no-op (`HELM_OK`), while OS keychain
+helpers may return `HELM_ERR_REGISTRY`; both are defined outcomes.
 **The password is used for the login call only — never logged, stored by helm-c, or
 echoed in errors.**
 
@@ -486,7 +489,8 @@ Installs / upgrades release `name` (SDK `Install.RunWithContext` /
 "chart_name","chart_version","app_version","labels","manifest"}` (additive-only).
 
 Shared `opts_json` keys: `namespace` (default = config's), `timeout_seconds`,
-`wait` (`""`/`"watcher"`/`"legacy"`/`"hookOnly"`), `dry_run`
+`wait` (`""`/`"watcher"`/`"legacy"`/`"hookOnly"`; `""` means `"hookOnly"`, the
+helm CLI default — the strategy is always set, the SDK rejects an unset one), `dry_run`
 (`""`/`"none"`/`"client"`/`"server"`), `rollback_on_failure`, `description`, `labels`,
 `chart_repo_url`, `chart_version`, `plain_http`. Install-only: `create_namespace`.
 Upgrade-only: `max_history`, `reset_values`, `reuse_values`, `cleanup_on_fail`.
@@ -503,7 +507,7 @@ int32_t helm_uninstall(helm_handle_t config, const char* name,
                        const char* opts_json, char** out, char** error_out);
 ```
 Removes release `name`. `opts_json` keys: `keep_history`, `timeout_seconds`, `dry_run`
-(bool), `ignore_not_found`, `wait`, `description`. `*out` receives
+(bool), `ignore_not_found`, `wait` (`""` = `"hookOnly"`), `description`. `*out` receives
 `{"info":"...","release":{summary}}`.
 
 | | |
@@ -518,7 +522,7 @@ int32_t helm_rollback(helm_handle_t config, const char* name,
                       const char* opts_json, char** error_out);
 ```
 Rolls `name` back; creates a **new** revision. `opts_json` keys: `version` (`0` =
-previous revision), `timeout_seconds`, `wait`, `dry_run` (string strategy). Status code
+previous revision), `timeout_seconds`, `wait` (`""` = `"hookOnly"`), `dry_run` (string strategy). Status code
 only — read the result via `helm_status`.
 
 | | |

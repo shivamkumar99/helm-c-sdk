@@ -316,11 +316,20 @@ static void test_chart_verify(void) {
  * harness intentionally writing a dummy fixture inside its own
  * environment-supplied scratch directory. */
 static int write_fixture_kubeconfig(char* dst, size_t cap) {
+    static const char suffix[] = "/kubeconfig.yaml";
     const char* workdir = getenv("HELMC_WORK_DIR");
     if (workdir == NULL || workdir[0] == '\0' || strstr(workdir, "..") != NULL) {
         return 0;
     }
-    snprintf(dst, cap, "%s/kubeconfig.yaml", workdir);
+    /* Bounded, truncation-free path construction (a plain snprintf here
+     * trips gcc -Werror=format-truncation because the env value length is
+     * unknown at compile time). */
+    size_t wl = strnlen(workdir, cap);
+    if (wl + sizeof(suffix) > cap) {
+        return 0;
+    }
+    memcpy(dst, workdir, wl);
+    memcpy(dst + wl, suffix, sizeof(suffix));
     FILE* f = NULL;
 #ifndef _WIN32
     int fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0600);

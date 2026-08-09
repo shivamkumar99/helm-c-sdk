@@ -157,9 +157,13 @@ func TestDistributionShimsOffline(t *testing.T) {
 	assert.NotEqualValues(t, cerrors.CodeOK, code)
 	assert.NotEmpty(t, detail)
 
-	// Logout without a login: defined error.
+	// Logout without a login is environment-dependent: oras-go >= v2.6.2
+	// treats removing absent credentials from a FILE store as a no-op (OK),
+	// while OS-keychain credential helpers still surface an error. Either
+	// way it must return a defined code, never crash.
 	code, _ = testRegistryLogout(h, "127.0.0.1:1")
-	assert.NotEqualValues(t, cerrors.CodeOK, code)
+	assert.Contains(t, []int32{int32(cerrors.CodeOK), int32(cerrors.CodeRegistry)}, int32(code),
+		"logout without login must be OK or a defined registry error")
 
 	// Pull from an unreachable repo; push of a nonexistent archive.
 	pullOpts := `{"repo_url":"http://127.0.0.1:1","dest_dir":` + strconv.Quote(t.TempDir()) + `}`

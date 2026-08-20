@@ -48,9 +48,9 @@ no struct-by-value returns anywhere in the ABI, so ctypes/N-API/Swift consumers 
 marshal structs. Optional parameters ride a single `const char* opts_json` whose keys are
 documented per function, mirror the SDK action fields, and are **additive forever**.
 Parsing is strict (unknown key = `HELM_ERR_INVALID_ARG`), so typos fail loudly instead of
-being silently ignored. The alternative (uplink-c-style result structs and per-option
-setter functions) was considered and rejected: more symbols, struct-by-value FFI
-requirements, no offsetting benefit.
+being silently ignored. The alternative (per-type result structs returned by value plus
+per-option setter functions) was considered and rejected: more symbols, struct-by-value
+FFI requirements, no offsetting benefit.
 
 ## 5. Layering
 

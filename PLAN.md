@@ -244,8 +244,7 @@ Four mandatory kinds per exported function: unit, integration, e2e, leak.
 ## 7. Open decisions (to settle in Phase 0 ADRs)
 
 An earlier design round (before this folder was recreated) had already settled some of these
-differently — modeled on **storj/uplink-c**. Where this plan diverges, the ADR must pick one
-deliberately:
+differently. Where this plan diverges, the ADR must pick one deliberately:
 
 1. ~~**Result shape**~~ — **RESOLVED (2026-08-07):** status + typed out-params;
    no struct-by-value returns.

@@ -182,6 +182,15 @@ Registry entries carry a type tag for this.
 - Note: `chart.Accessor.MetadataAsMap()` keys by Go field name (`Version`,
   `AppVersion`), not YAML names — the SDK's `structToMap` uses `reflect` field names.
 
+### Maintenance note — stdlib CVEs reach shipped binaries
+The library ships compiled standard-library code, so a Go stdlib CVE is real
+for everyone who installs a released artifact. When govulncheck turns red
+(exit 3), bump the `toolchain` line in go.mod to the release named in the
+report, then **re-run the Release workflow** so the published binaries are
+rebuilt — patching the source alone does not fix what users already have.
+Last bump: go1.26.6 on 2026-08-15 (asn1 recursion, net/http IDNA, two
+crypto/tls issues).
+
 ### Distribution backlog (raised while planning the Python binding)
 - [ ] Widen the release matrix beyond linux-amd64/darwin-arm64/windows-amd64:
       linux-arm64 (arm runner or `zig cc` cross-compile), darwin-amd64

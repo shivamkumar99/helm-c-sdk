@@ -200,7 +200,7 @@ jobs:
       - name: Upload gosec SARIF to Security tab (maintainer-only view)
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
           sarif_file: reports/gosec.sarif
           category: gosec
@@ -254,7 +254,7 @@ jobs:
       - name: Upload Codacy SARIF to Security tab
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
           sarif_file: codacy.sarif
           category: codacy

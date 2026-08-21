@@ -208,7 +208,17 @@ jobs:
         shell: bash
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./... > reports/govulncheck.txt 2>&1
+          # Exit 3 means vulnerabilities were found, and this gate is meant to
+          # block: the shared library ships compiled stdlib code, so a stdlib
+          # CVE is real for everyone who installs it. The vulnerability
+          # database is live, so this can turn red without any code change —
+          # the fix is normally to bump the toolchain line in go.mod to the
+          # patched Go release named in the report.
+          if ! govulncheck ./... > reports/govulncheck.txt 2>&1; then
+            echo "::error::govulncheck reported vulnerabilities; see the summary below and the uploaded report."
+            grep -E "^Vulnerability|Fixed in:|Your code is affected" reports/govulncheck.txt || true
+            exit 1
+          fi
       - name: Upload SAST reports (private repo only)
         # Run artifacts are downloadable by anyone who can view the repo, so
         # finding details are only stored while the repo is private; on a

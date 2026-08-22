@@ -171,6 +171,33 @@ func TestUninstallNotFound(t *testing.T) {
 	assert.Equal(t, cerrors.CodeNotFound, cerrors.FromError(err))
 }
 
+// TestUninstallNotFoundIgnored covers the IgnoreNotFound path, where the SDK
+// signals "nothing to do" by returning (nil, nil) rather than a response.
+func TestUninstallNotFoundIgnored(t *testing.T) {
+	cfg := newMemoryConfig(t)
+
+	out, err := UninstallRelease(cfg, "no-such-release", UninstallOptions{IgnoreNotFound: true})
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.NotContains(t, decoded, "release", "nothing was uninstalled")
+}
+
+// TestUninstallDryRunNotFoundIgnored covers the second (nil, nil) return, on
+// the dry-run branch.
+func TestUninstallDryRunNotFoundIgnored(t *testing.T) {
+	cfg := newMemoryConfig(t)
+
+	out, err := UninstallRelease(cfg, "no-such-release",
+		UninstallOptions{IgnoreNotFound: true, DryRun: true})
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+	assert.NotContains(t, decoded, "release", "nothing was uninstalled")
+}
+
 func TestInstallDryRunPersistsNothing(t *testing.T) {
 	cfg := newMemoryConfig(t)
 	chart := loadFixtureChart(t)

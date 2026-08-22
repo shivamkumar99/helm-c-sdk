@@ -510,6 +510,10 @@ Removes release `name`. `opts_json` keys: `keep_history`, `timeout_seconds`, `dr
 (bool), `ignore_not_found`, `wait` (`""` = `"hookOnly"`), `description`. `*out` receives
 `{"info":"...","release":{summary}}`.
 
+With `ignore_not_found` set, removing a release that does not exist succeeds and
+`*out` receives `{"info":""}` with no `release` key — nothing was removed, so there
+is no release to describe.
+
 | | |
 |---|---|
 | Returns | `HELM_OK`, `HELM_ERR_NOT_FOUND`, `HELM_ERR_RELEASE`, arg/handle errors |

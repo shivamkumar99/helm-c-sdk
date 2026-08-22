@@ -279,6 +279,13 @@ func UninstallRelease(cfgObj any, name string, opts UninstallOptions) (string, e
 	if err != nil {
 		return "", wrapActionError(err, cerrors.CodeRelease)
 	}
+	// With IgnoreNotFound set, the SDK reports "there was nothing to remove"
+	// as (nil, nil) rather than an empty response, on both the dry-run and
+	// the normal path. Dereferencing that is a crash, not an error the
+	// caller could catch, so report the no-op instead.
+	if resp == nil {
+		return marshalJSON(map[string]any{"info": ""})
+	}
 	out := map[string]any{"info": resp.Info}
 	if resp.Release != nil {
 		s, err := summarizeRelease(resp.Release, false)

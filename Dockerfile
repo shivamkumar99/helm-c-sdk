@@ -5,7 +5,7 @@
 # Pinned toolchain image matching go.mod; Debian 12 glibc matches the
 # distroless runtime below.
 # ---------------------------------------------------------------------------
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.27-bookworm AS builder
 
 WORKDIR /src
 

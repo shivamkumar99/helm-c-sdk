@@ -177,32 +177,45 @@ func DependencyList(chartDir string) (string, error) {
 // logic (pkg/action/dependency.go at the pinned release), which is only
 // reachable there through a text table.
 func dependencyStatus(chartDir string, dep *chart.Dependency, parent *chart.Chart) string {
-	pattern := filepath.Join(chartDir, "charts", dep.Name+"-*.tgz")
-	archives, err := filepath.Glob(pattern)
-	switch {
-	case err != nil:
+	if s := packagedStatus(chartDir, dep); s != "" {
+		return s
+	}
+	return unpackedStatus(dep, parent)
+}
+
+// packagedStatus reports on the packaged copy of dep under charts/, or ""
+// when no single archive settles the question.
+func packagedStatus(chartDir string, dep *chart.Dependency) string {
+	archives, err := filepath.Glob(filepath.Join(chartDir, "charts", dep.Name+"-*.tgz"))
+	if err != nil {
 		return "bad pattern"
-	case len(archives) > 1:
-		var found []string
-		for _, arc := range archives {
-			stem := strings.TrimSuffix(filepath.Base(arc), ".tgz")
-			if _, err := semver.StrictNewVersion(strings.TrimPrefix(stem, dep.Name+"-")); err == nil {
-				found = append(found, arc)
-			}
-		}
-		if len(found) == 1 {
-			if s := archiveStatus(found[0], dep); s != "" {
-				return s
-			}
-		} else if len(found) > 1 {
+	}
+	if len(archives) > 1 {
+		archives = versionedArchives(archives, dep.Name)
+		if len(archives) > 1 {
 			return "too many matches"
 		}
-	case len(archives) == 1:
-		if s := archiveStatus(archives[0], dep); s != "" {
-			return s
+	}
+	if len(archives) == 1 {
+		return archiveStatus(archives[0], dep)
+	}
+	return ""
+}
+
+// versionedArchives keeps the archives whose name is <dep>-<strict semver>.tgz.
+func versionedArchives(archives []string, name string) []string {
+	var found []string
+	for _, arc := range archives {
+		stem := strings.TrimSuffix(filepath.Base(arc), ".tgz")
+		if _, err := semver.StrictNewVersion(strings.TrimPrefix(stem, name+"-")); err == nil {
+			found = append(found, arc)
 		}
 	}
+	return found
+}
 
+// unpackedStatus reports on dep as a subchart directory loaded with parent.
+func unpackedStatus(dep *chart.Dependency, parent *chart.Chart) string {
 	var sub *chart.Chart
 	for _, item := range parent.Dependencies() {
 		if item.Name() == dep.Name {

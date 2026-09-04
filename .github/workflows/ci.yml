@@ -86,7 +86,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          gcc -Wall -Wextra -Werror -o build/harness.exe test/c-harness/main.c \
+          gcc -Wall -Wextra -Werror -o build/harness.exe test/c-harness/*.c \
             -I include -L build -lhelm_c
           go run ./test/genfixtures -dir build/signing
           HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
@@ -147,7 +147,7 @@ jobs:
         run: |
           make build
           x86_64-w64-mingw32-clang -Wall -Wextra -Werror -o build/harness.exe \
-            test/c-harness/main.c -I include -L build -lhelm_c
+            test/c-harness/*.c -I include -L build -lhelm_c
           go run ./test/genfixtures -dir build/signing
           HELMC_SIGNING_DIR=build/signing HELMC_WORK_DIR=$(mktemp -d) \
           PATH="$PWD/build:$PATH" ./build/harness.exe 2>&1 | tee reports/harness-llvm.txt

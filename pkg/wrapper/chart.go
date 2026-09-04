@@ -274,41 +274,19 @@ func ParseShowOptions(optsJSON string) (ShowOptions, error) {
 // oci:// reference — as the SDK renders them (YAML/text), without
 // installing. clientObj is an optional registry client for private OCI.
 func ShowChart(clientObj any, chartRef string, opts ShowOptions) (string, error) {
-	var format action.ShowOutputFormat
-	switch opts.Format {
-	case "", "all":
-		format = action.ShowAll
-	case "chart", "values", "readme", "crds":
-		format = action.ShowOutputFormat(opts.Format)
-	default:
-		return "", cerrors.New(cerrors.CodeInvalidArg,
-			fmt.Sprintf(`invalid show format %q: must be "all", "chart", "values", "readme" or "crds"`, opts.Format))
+	format, err := showFormat(opts.Format)
+	if err != nil {
+		return "", err
 	}
 	client, err := resolveClient(clientObj, registry.IsOCI(chartRef), opts.PlainHTTP)
 	if err != nil {
 		return "", err
 	}
-
-	path := chartRef
-	if _, statErr := os.Stat(chartRef); statErr != nil {
-		// Remote reference: pull through the private, silent path first.
-		cfg := &Config{Cfg: action.NewConfiguration(), Namespace: "default"}
-		cfg.Cfg.RegistryClient = client
-		dir, err := privateTempDir("show")
-		if err != nil {
-			return "", err
-		}
-		defer removeBestEffort(dir)
-		rc, err := pullChartRef(cfg, chartRef, opts.ChartRefOptions)
-		if err != nil {
-			return "", err
-		}
-		// pullChartRef loaded and discarded its scratch dir; re-save the
-		// chart so the SDK's Show can read it from disk.
-		if path, err = chartutil.Save(rc.chart, dir); err != nil {
-			return "", cerrors.WithCode(cerrors.CodeIO, err)
-		}
+	path, cleanup, err := localChartPath(client, chartRef, opts.ChartRefOptions)
+	if err != nil {
+		return "", err
 	}
+	defer cleanup()
 
 	s := action.NewShow(format, action.NewConfiguration())
 	s.Devel = opts.Devel
@@ -318,6 +296,46 @@ func ShowChart(clientObj any, chartRef string, opts ShowOptions) (string, error)
 		return "", cerrors.WithCode(cerrors.CodeChartLoad, err)
 	}
 	return out, nil
+}
+
+// showFormat maps the documented format names onto the SDK's.
+func showFormat(s string) (action.ShowOutputFormat, error) {
+	switch s {
+	case "", "all":
+		return action.ShowAll, nil
+	case "chart", "values", "readme", "crds":
+		return action.ShowOutputFormat(s), nil
+	}
+	return "", cerrors.New(cerrors.CodeInvalidArg,
+		fmt.Sprintf(`invalid show format %q: must be "all", "chart", "values", "readme" or "crds"`, s))
+}
+
+// localChartPath returns a path on disk for chartRef: the reference itself
+// when it is local, otherwise a copy pulled through the private, silent
+// download path into a scratch directory the returned cleanup removes.
+func localChartPath(client *registry.Client, chartRef string, opts ChartRefOptions) (string, func(), error) {
+	if _, err := os.Stat(chartRef); err == nil {
+		return chartRef, func() {}, nil
+	}
+	cfg := &Config{Cfg: action.NewConfiguration(), Namespace: "default"}
+	cfg.Cfg.RegistryClient = client
+	dir, err := privateTempDir("show")
+	if err != nil {
+		return "", nil, err
+	}
+	rc, err := pullChartRef(cfg, chartRef, opts)
+	if err != nil {
+		removeBestEffort(dir)
+		return "", nil, err
+	}
+	// pullChartRef loaded and discarded its scratch dir; re-save the chart
+	// so the SDK's Show can read it from disk.
+	path, err := chartutil.Save(rc.chart, dir)
+	if err != nil {
+		removeBestEffort(dir)
+		return "", nil, cerrors.WithCode(cerrors.CodeIO, err)
+	}
+	return path, func() { removeBestEffort(dir) }, nil
 }
 
 // chartAccessor is the SDK's version-agnostic view of a chart.

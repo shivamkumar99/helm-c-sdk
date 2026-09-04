@@ -107,8 +107,21 @@ cgo FFI contract and none reachable from library logic:
    — copies a caller-owned buffer of the stated, bounds-checked length into Go
    memory; the C pointer is never retained beyond the call.
 
-The test seam (`testbridge.go`, excluded from the shipped library) additionally
-hands a Go buffer's address to that shim for the duration of one call.
+The Go test seam (`testbridge*.go`) additionally hands a Go buffer's address to
+that shim for the duration of one call. The seam is compiled into the library
+(cgo is not permitted in `_test.go` files) but consists only of unexported Go
+functions — it adds no C symbol and is unreachable from any host.
+
+## Scanner findings accepted by design
+
+The following are reported by static analysis on every run and are won't-fix;
+each is explained at its site:
+
+- `helm_install` / `helm_upgrade` take 9 parameters — the frozen C ABI.
+- The `unsafe` uses above — mandated by the cgo FFI contract.
+- Bounded `memcpy` in `test/c-harness` — a test program copying into a buffer
+  whose capacity it has just checked; the guard is documented inline.
+- Tests reading files they created moments earlier under a temp directory.
 
 Security scanners flag any `unsafe` import (e.g. gosec G103); those findings are
 accepted-by-design here with inline `#nosec G103` annotations at each site. No

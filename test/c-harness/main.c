@@ -3,25 +3,10 @@
  * C ABI exactly the way a language binding would — create, use, free,
  * double-free, and the leak gate. Exits non-zero on any failure.
  */
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include "harness.h"
 
-#ifndef _WIN32
-#include <fcntl.h>
-#include <pthread.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
-
-#include "helm_c.h"
-
-static int failures = 0;
-
-/* Chart directory produced by test_chart_authoring; later tests reuse it so
- * the harness needs no pre-existing chart fixture on disk. */
-static char* g_chart_dir = NULL;
+int failures = 0;
+char* g_chart_dir = NULL;
 
 static const char* kubeconfig_yaml =
     "apiVersion: v1\n"
@@ -39,28 +24,6 @@ static const char* kubeconfig_yaml =
     "users:\n"
     "  - name: helmc-test\n"
     "    user: {}\n";
-
-#define CHECK(cond, msg)                                            \
-    do {                                                            \
-        if (!(cond)) {                                              \
-            fprintf(stderr, "FAIL: %s (%s:%d)\n", msg, __FILE__, __LINE__); \
-            failures++;                                             \
-        }                                                           \
-    } while (0)
-
-/* Upper bound for library-returned strings when length-checking; keeps
- * string inspection bounded even if a returned buffer were unterminated
- * (CWE-126). */
-#define HELMC_MAX_STR 4096
-
-/* Free a library string and clear the variable: a failed call leaves its
- * out-param untouched, so a reused variable would otherwise hold a stale,
- * already-freed pointer. */
-#define FREE_AND_NULL(p)        \
-    do {                        \
-        helm_free_string(p);    \
-        (p) = NULL;             \
-    } while (0)
 
 static void test_versions(void) {
     char* v = helm_c_version();
@@ -388,38 +351,7 @@ static void test_config_and_context(void) {
         helm_free_string(list);
         helm_free_string(lerr);
 
-        /* Additions since 0.1.0 that need a config. */
-        CHECK(helm_config_check_reachable(cfg, NULL) == HELM_ERR_KUBE,
-              "reachability probe reports the unreachable cluster");
-        helm_handle_t rc = 0;
-        CHECK(helm_registry_client_new(NULL, &rc, NULL) == HELM_OK, "client for binding");
-        CHECK(helm_config_set_registry_client(cfg, rc, NULL) == HELM_OK,
-              "registry client bound to config");
-        CHECK(helm_config_set_registry_client(cfg, 0, NULL) == HELM_OK,
-              "registry client unbound with 0");
-        CHECK(helm_registry_client_free(rc, NULL) == HELM_OK, "binding client freed");
-        char* got = NULL;
-        CHECK(helm_get(cfg, "absent", NULL, &got, NULL) != HELM_OK,
-              "get against unreachable cluster is a defined error");
-        helm_free_string(got);
-        CHECK(helm_test_run(cfg, "absent", NULL, &got, NULL) != HELM_OK,
-              "test against unreachable cluster is a defined error");
-        helm_free_string(got);
-        if (g_chart_dir != NULL) {
-            helm_handle_t ch = 0;
-            if (helm_chart_load(g_chart_dir, &ch, NULL) == HELM_OK) {
-                /* Only `lookup` touches the cluster; the authored chart never
-                 * calls it, so a cluster-aware render still succeeds. */
-                char* rendered = NULL;
-                CHECK(helm_render_with_config(cfg, ch, NULL, "{\"name\":\"cfg-r\"}",
-                                              &rendered, NULL) == HELM_OK,
-                      "cluster-aware render succeeds without lookup");
-                CHECK(rendered != NULL && strstr(rendered, "cfg-r") != NULL,
-                      "cluster-aware render carries the release name");
-                helm_free_string(rendered);
-                helm_chart_free(ch, NULL);
-            }
-        }
+        config_additions_checks(cfg);
 
         CHECK(helm_config_free(cfg, NULL) == HELM_OK, "config freed");
         CHECK(helm_config_free(cfg, NULL) == HELM_ERR_INVALID_HANDLE,
@@ -532,148 +464,6 @@ static void test_thread_stress(void) {
     printf("skip: thread stress not built on Windows\n");
 }
 #endif
-
-/* Symbols added after 0.1.0 that run offline: chart content, alternative
- * loaders/writers, signing, YAML values, show, lint options, the --set
- * family, repo index generation, dependency listing, and registry queries
- * against an unreachable host. Uses the chart authored earlier in the run. */
-static void test_additions(void) {
-    const char* workdir = getenv("HELMC_WORK_DIR");
-    if (g_chart_dir == NULL || workdir == NULL || workdir[0] == '\0') {
-        printf("skip: no authored chart / HELMC_WORK_DIR — additions not exercised\n");
-        return;
-    }
-    helm_handle_t h = 0;
-    CHECK(helm_chart_load(g_chart_dir, &h, NULL) == HELM_OK, "additions: chart loads");
-
-    char* out = NULL;
-    CHECK(helm_chart_templates(h, &out, NULL) == HELM_OK && out != NULL &&
-              strstr(out, "templates/") != NULL,
-          "chart templates listed");
-    FREE_AND_NULL(out);
-    CHECK(helm_chart_files(h, &out, NULL) == HELM_OK && out != NULL, "chart files listed");
-    FREE_AND_NULL(out);
-    CHECK(helm_chart_crds(h, &out, NULL) == HELM_OK && out != NULL, "chart crds listed");
-    FREE_AND_NULL(out);
-    CHECK(helm_chart_schema(h, &out, NULL) == HELM_OK && out != NULL, "chart schema read");
-    FREE_AND_NULL(out);
-    CHECK(helm_chart_dependencies(h, &out, NULL) == HELM_OK && out != NULL,
-          "chart dependencies listed");
-    FREE_AND_NULL(out);
-
-    /* Archive round trip: save -> digest -> load from bytes -> expand. */
-    char* tgz = NULL;
-    CHECK(helm_chart_save(h, workdir, &tgz, NULL) == HELM_OK && tgz != NULL, "additions: saved");
-    if (tgz != NULL) {
-        char* digest = NULL;
-        CHECK(helm_chart_digest(tgz, &digest, NULL) == HELM_OK && digest != NULL &&
-                  strncmp(digest, "sha256:", 7) == 0,
-              "archive digest computed");
-        FREE_AND_NULL(digest);
-
-        FILE* f = fopen(tgz, "rb");
-        if (f != NULL) {
-            fseek(f, 0, SEEK_END);
-            long n = ftell(f);
-            fseek(f, 0, SEEK_SET);
-            uint8_t* buf = (n > 0) ? (uint8_t*)malloc((size_t)n) : NULL;
-            if (buf != NULL && fread(buf, 1, (size_t)n, f) == (size_t)n) {
-                helm_handle_t h2 = 0;
-                CHECK(helm_chart_load_archive(buf, (uint64_t)n, &h2, NULL) == HELM_OK,
-                      "chart loads from an in-memory archive");
-                CHECK(helm_chart_free(h2, NULL) == HELM_OK, "in-memory chart freed");
-            }
-            free(buf);
-            fclose(f);
-        }
-        CHECK(helm_chart_load_archive(NULL, 0, &h, NULL) == HELM_ERR_INVALID_ARG,
-              "NULL archive buffer rejected");
-
-        char expanded[600];
-        snprintf(expanded, sizeof(expanded), "%s/expanded", workdir);
-        CHECK(helm_chart_expand(expanded, tgz, NULL) == HELM_OK, "archive expanded");
-
-        /* Signing with the generated secret keyring, then verifying. */
-        const char* sdir = getenv("HELMC_SIGNING_DIR");
-        if (sdir != NULL && sdir[0] != '\0') {
-            char opts[700];
-            snprintf(opts, sizeof(opts),
-                     "{\"key\":\"helm-c-sdk-test\",\"keyring\":\"%s/secring.gpg\"}", sdir);
-            char* prov = NULL;
-            CHECK(helm_chart_sign(tgz, opts, &prov, NULL) == HELM_OK && prov != NULL,
-                  "archive signed");
-            FREE_AND_NULL(prov);
-            char keyring[600];
-            snprintf(keyring, sizeof(keyring), "%s/pubring.gpg", sdir);
-            char* verified = NULL;
-            CHECK(helm_chart_verify(tgz, NULL, keyring, &verified, NULL) == HELM_OK,
-                  "signature we produced verifies");
-            FREE_AND_NULL(verified);
-        }
-        CHECK(helm_chart_sign(tgz, NULL, &out, NULL) == HELM_ERR_INVALID_ARG,
-              "signing without key/keyring rejected");
-        FREE_AND_NULL(out);
-
-        /* Repo index over the directory holding the archive. */
-        char* idx = NULL;
-        CHECK(helm_repo_index_generate(workdir, "{\"base_url\":\"https://x/\"}", &idx, NULL)
-                  == HELM_OK && idx != NULL && strstr(idx, "harnesschart") != NULL,
-              "repo index generated");
-        FREE_AND_NULL(idx);
-        FREE_AND_NULL(tgz);
-    }
-
-    char* dir = NULL;
-    CHECK(helm_chart_save_dir(h, workdir, &dir, NULL) == HELM_OK && dir != NULL,
-          "chart saved as a directory");
-    FREE_AND_NULL(dir);
-    CHECK(helm_chart_create_from("fromstarter", workdir, g_chart_dir, &dir, NULL) == HELM_OK &&
-              dir != NULL,
-          "chart created from a starter");
-    FREE_AND_NULL(dir);
-    CHECK(helm_chart_free(h, NULL) == HELM_OK, "additions: chart freed");
-
-    /* Values, show, lint options, --set family. */
-    CHECK(helm_values_from_yaml("a: 1\n", &out, NULL) == HELM_OK && out != NULL &&
-              strstr(out, "\"a\":1") != NULL,
-          "YAML values parsed");
-    FREE_AND_NULL(out);
-    CHECK(helm_show(0, g_chart_dir, "{\"format\":\"chart\"}", &out, NULL) == HELM_OK &&
-              out != NULL && strstr(out, "harnesschart") != NULL,
-          "show renders the chart definition");
-    FREE_AND_NULL(out);
-    CHECK(helm_lint_run_opts(g_chart_dir, NULL, "{\"strict\":true}", &out, NULL) == HELM_OK &&
-              out != NULL,
-          "lint with options runs");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_string("p=80", &out, NULL) == HELM_OK && out != NULL &&
-              strstr(out, "\"80\"") != NULL,
-          "--set-string keeps strings");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_json("a={\"b\":1}", &out, NULL) == HELM_OK, "--set-json parses");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_literal("a=b,c", &out, NULL) == HELM_OK, "--set-literal parses");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_file("k=/no/such/file", &out, NULL) == HELM_ERR_VALUES,
-          "--set-file with a missing file is a defined error");
-    FREE_AND_NULL(out);
-    CHECK(helm_dependency_list(g_chart_dir, &out, NULL) == HELM_OK && out != NULL,
-          "dependency list runs");
-    FREE_AND_NULL(out);
-
-    /* Registry queries against an unreachable host: defined errors. */
-    helm_handle_t rc = 0;
-    CHECK(helm_registry_client_new("{\"plain_http\":true}", &rc, NULL) == HELM_OK,
-          "client for registry queries");
-    out = NULL;
-    CHECK(helm_registry_tags(rc, "oci://127.0.0.1:1/x/y", &out, NULL) == HELM_ERR_REGISTRY,
-          "tags against unreachable registry is a defined error");
-    FREE_AND_NULL(out);
-    CHECK(helm_registry_resolve(rc, "oci://127.0.0.1:1/x/y:1.0.0", &out, NULL) == HELM_ERR_REGISTRY,
-          "resolve against unreachable registry is a defined error");
-    FREE_AND_NULL(out);
-    CHECK(helm_registry_client_free(rc, NULL) == HELM_OK, "query client freed");
-}
 
 int main(void) {
     test_versions();

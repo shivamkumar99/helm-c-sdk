@@ -17,7 +17,7 @@ COPY . .
 
 # -trimpath keeps build-host paths out of the binary.
 RUN CGO_ENABLED=1 go build -trimpath -buildmode=c-shared -o /out/libhelm_c.so ./capi \
- && gcc -Wall -Wextra -Werror -o /out/helm-c-harness test/c-harness/main.c \
+ && gcc -Wall -Wextra -Werror -o /out/helm-c-harness test/c-harness/*.c \
       -I include -L /out -lhelm_c
 
 # ---------------------------------------------------------------------------

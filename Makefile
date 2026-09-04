@@ -69,7 +69,7 @@ fixtures:
 	$(GO) run ./test/genfixtures -dir $(BUILD)/signing
 
 harness: build fixtures
-	$(CC) -Wall -Wextra -Werror $(PTHREAD) -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
+	$(CC) -Wall -Wextra -Werror $(PTHREAD) -o $(BUILD)/$(HARNESS) test/c-harness/*.c \
 		-I include -L $(BUILD) -lhelm_c $(RPATH)
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) \
 		LD_LIBRARY_PATH=$(BUILD) DYLD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)
@@ -77,7 +77,7 @@ harness: build fixtures
 # Linux-only: harness under AddressSanitizer/LeakSanitizer.
 leak-check: build fixtures
 	$(CC) -Wall -Wextra -Werror $(PTHREAD) -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
-		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c $(RPATH)
+		test/c-harness/*.c -I include -L $(BUILD) -lhelm_c $(RPATH)
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)-asan
 

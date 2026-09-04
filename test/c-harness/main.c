@@ -303,8 +303,8 @@ static int write_fixture_kubeconfig(char* dst, size_t cap) {
     /* Both copies are bounded by the guard above: wl + sizeof(suffix) <= cap,
      * so dst (capacity cap) always holds workdir (wl bytes) plus the
      * NUL-terminated suffix. */
-    memcpy(dst, workdir, wl);                /* Flawfinder: ignore */
-    memcpy(dst + wl, suffix, sizeof(suffix)); /* Flawfinder: ignore */
+    memcpy(dst, workdir, wl);                 /* Flawfinder: ignore */ // nosemgrep: bounded above
+    memcpy(dst + wl, suffix, sizeof(suffix)); /* Flawfinder: ignore */ // nosemgrep: bounded above
     FILE* f = NULL;
 #ifndef _WIN32
     int fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0600);

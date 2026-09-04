@@ -345,10 +345,16 @@ func TestExpandSaveDirAndCreateFrom(t *testing.T) {
 	require.NoError(t, err)
 	assert.FileExists(t, filepath.Join(dir, "values.yaml"))
 
-	created, err := CreateChartFrom("fromstarter", t.TempDir(), testChart)
+	parent := t.TempDir()
+	created, err := CreateChartFrom("fromstarter", parent, testChart)
 	require.NoError(t, err)
-	assert.FileExists(t, filepath.Join(created, "Chart.yaml"))
-	meta, err := os.ReadFile(filepath.Join(created, "Chart.yaml"))
+	// The library must place the chart inside the requested directory —
+	// assert containment before touching the returned path.
+	require.Equal(t, parent, filepath.Dir(created), "created chart escapes the target directory")
+	require.Equal(t, "fromstarter", filepath.Base(created))
+	metaPath := filepath.Join(parent, filepath.Base(created), "Chart.yaml")
+	assert.FileExists(t, metaPath)
+	meta, err := os.ReadFile(metaPath)
 	require.NoError(t, err)
 	assert.Contains(t, string(meta), "name: fromstarter")
 }

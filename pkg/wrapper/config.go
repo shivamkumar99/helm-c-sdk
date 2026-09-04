@@ -18,6 +18,11 @@ type Config struct {
 	Cfg       *action.Configuration
 	Namespace string
 
+	// opts is what the config was built from, kept so an action can derive a
+	// sibling configuration (another namespace, or a throwaway for a
+	// client-side dry run) without touching the shared one.
+	opts ConfigOptions
+
 	// tempKubeconfig holds the private file backing kubeconfig_content; it
 	// must outlive the config (loading is lazy) and is removed by Close.
 	tempKubeconfig string
@@ -103,24 +108,6 @@ func writeTempKubeconfig(content string) (string, error) {
 	return path, nil
 }
 
-// resolveKubeconfig points settings at the requested kubeconfig source and
-// returns the temp-file path when inline content was materialized (the caller
-// owns its removal).
-func resolveKubeconfig(settings *cli.EnvSettings, opts ConfigOptions) (string, error) {
-	switch {
-	case opts.KubeconfigContent != "":
-		path, err := writeTempKubeconfig(opts.KubeconfigContent)
-		if err != nil {
-			return "", err
-		}
-		settings.KubeConfig = path
-		return path, nil
-	case opts.KubeconfigPath != "":
-		settings.KubeConfig = opts.KubeconfigPath
-	}
-	return "", nil
-}
-
 // applyKubeSettings copies the connection options onto the CLI settings.
 func applyKubeSettings(settings *cli.EnvSettings, opts ConfigOptions) {
 	settings.KubeContext = opts.KubeContext
@@ -145,35 +132,82 @@ func NewConfig(opts ConfigOptions) (*Config, error) {
 			"kubeconfig_path and kubeconfig_content are mutually exclusive")
 	}
 
-	settings := cli.New()
-	tempKubeconfig, err := resolveKubeconfig(settings, opts)
-	if err != nil {
-		return nil, err
+	// Inline kubeconfig content is materialized once; every configuration
+	// derived from this one points at the same private file.
+	tempKubeconfig := ""
+	if opts.KubeconfigContent != "" {
+		path, err := writeTempKubeconfig(opts.KubeconfigContent)
+		if err != nil {
+			return nil, err
+		}
+		tempKubeconfig = path
+		opts.KubeconfigContent = ""
+		opts.KubeconfigPath = path
 	}
-	applyKubeSettings(settings, opts)
 
 	namespace := opts.Namespace
 	if namespace == "" {
 		namespace = "default"
 	}
+
+	cfg, err := newActionConfiguration(opts, namespace)
+	if err != nil {
+		if tempKubeconfig != "" {
+			removeBestEffort(tempKubeconfig)
+		}
+		return nil, err
+	}
+	return &Config{Cfg: cfg, Namespace: namespace, opts: opts, tempKubeconfig: tempKubeconfig}, nil
+}
+
+// newActionConfiguration builds and initializes an SDK configuration for
+// namespace from opts. Each call gets its own EnvSettings: the SDK's REST
+// client getter keeps a pointer to the settings' namespace, so two
+// configurations must never share one.
+func newActionConfiguration(opts ConfigOptions, namespace string) (*action.Configuration, error) {
+	settings := newSettings()
+	if opts.KubeconfigPath != "" {
+		settings.KubeConfig = opts.KubeconfigPath
+	}
+	applyKubeSettings(settings, opts)
 	settings.SetNamespace(namespace)
 
 	cfg := action.NewConfiguration(action.ConfigurationSetLogger(CurrentLogHandler()))
 	if err := cfg.Init(settings.RESTClientGetter(), namespace, opts.StorageDriver); err != nil {
-		if tempKubeconfig != "" {
-			removeBestEffort(tempKubeconfig)
-		}
 		return nil, cerrors.WithCode(cerrors.CodeKube, err)
 	}
-	return &Config{Cfg: cfg, Namespace: namespace, tempKubeconfig: tempKubeconfig}, nil
+	return cfg, nil
+}
+
+// forNamespace returns the configuration to run an action in namespace: the
+// shared one when it matches, otherwise a fresh sibling initialized for that
+// namespace ("" = all namespaces, as `helm list -A` does). The shared
+// configuration is never re-initialized in place.
+func (c *Config) forNamespace(namespace string) (*action.Configuration, error) {
+	if namespace == c.Namespace {
+		return c.Cfg, nil
+	}
+	return newActionConfiguration(c.opts, namespace)
+}
+
+// detachedConfiguration returns a throwaway copy of the shared configuration
+// for an SDK call that is known to mutate its Configuration. The copy shares
+// the live clients and storage, so the call behaves identically, but whatever
+// it replaces (client-side dry runs swap in fakes) dies with the copy.
+func (c *Config) detachedConfiguration() *action.Configuration {
+	cp := action.NewConfiguration(action.ConfigurationSetLogger(c.Cfg.Logger().Handler()))
+	cp.RESTClientGetter = c.Cfg.RESTClientGetter
+	cp.Releases = c.Cfg.Releases
+	cp.KubeClient = c.Cfg.KubeClient
+	cp.RegistryClient = c.Cfg.RegistryClient
+	cp.Capabilities = c.Cfg.Capabilities
+	cp.CustomTemplateFuncs = c.Cfg.CustomTemplateFuncs
+	cp.HookOutputFunc = c.Cfg.HookOutputFunc
+	return cp
 }
 
 // AsConfig recovers the concrete config from a registry object, keeping SDK
 // types out of the capi package.
 func AsConfig(obj any) (*Config, error) {
-	c, ok := obj.(*Config)
-	if !ok {
-		return nil, cerrors.New(cerrors.CodeWrongHandleType, "handle does not hold a config")
-	}
-	return c, nil
+	return as[*Config](obj, "a config")
 }

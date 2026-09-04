@@ -14,7 +14,7 @@ import (
 
 // libVersion is the helm-c library version; keep in lockstep with the
 // HELM_C_VERSION_* macros in include/helm_c.h.
-const libVersion = "0.1.0"
+const libVersion = "0.2.0"
 
 // registry holds every live Go object handed to C as an opaque handle.
 var registry = handles.NewRegistry()

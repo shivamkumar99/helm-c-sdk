@@ -95,13 +95,13 @@ func TestInstallByRepoRef(t *testing.T) {
 	cfg := newMemoryConfig(t)
 
 	out, err := InstallRelease(context.Background(), cfg, nil, "testchart", "repo-ref-rel", "",
-		InstallOptions{ChartRepoURL: srv.URL(), ChartVersion: "0.1.0"})
+		InstallOptions{ChartRefOptions: ChartRefOptions{ChartRepoURL: srv.URL(), ChartVersion: "0.1.0"}})
 	require.NoError(t, err)
 	assert.Contains(t, out, `"chart_name":"testchart"`)
 
 	// Upgrade by ref too — the full CLI-style flow without a chart handle.
 	out, err = UpgradeRelease(context.Background(), cfg, nil, "testchart", "repo-ref-rel",
-		`{"replicaCount":4}`, UpgradeOptions{ChartRepoURL: srv.URL(), ChartVersion: "0.1.0"})
+		`{"replicaCount":4}`, UpgradeOptions{ChartRefOptions: ChartRefOptions{ChartRepoURL: srv.URL(), ChartVersion: "0.1.0"}})
 	require.NoError(t, err)
 	var rel summaryJSON
 	require.NoError(t, json.Unmarshal([]byte(out), &rel))

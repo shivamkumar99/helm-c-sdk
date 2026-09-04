@@ -172,50 +172,39 @@ func helm_uninstall(cfgH C.uint64_t, name *C.char, optsJSON *C.char, out **C.cha
 // revision). No result payload — status code only.
 //
 //export helm_rollback
-func helm_rollback(cfgH C.uint64_t, name *C.char, optsJSON *C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if name == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "name must not be NULL"))
-	}
-	cfgObj, err := registry.Get(uint64(cfgH), handles.TypeConfig)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	opts, err := wrapper.ParseRollbackOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	if err := wrapper.RollbackRelease(cfgObj, C.GoString(name), opts); err != nil {
-		return failure(errOut, err)
-	}
-	return C.int32_t(cerrors.CodeOK)
+func helm_rollback(cfgH C.uint64_t, name *C.char, optsJSON *C.char, errOut **C.char) C.int32_t {
+	return statusResult(errOut, func() error {
+		if err := requireArgs("name", name); err != nil {
+			return err
+		}
+		cfgObj, err := registry.Get(uint64(cfgH), handles.TypeConfig)
+		if err != nil {
+			return err
+		}
+		opts, err := wrapper.ParseRollbackOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return err
+		}
+		return wrapper.RollbackRelease(cfgObj, C.GoString(name), opts)
+	})
 }
 
 // helm_list returns a JSON array of release summaries (no manifests).
 // opts_json optional.
 //
 //export helm_list
-func helm_list(cfgH C.uint64_t, optsJSON *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
-	}
-	cfgObj, err := registry.Get(uint64(cfgH), handles.TypeConfig)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	opts, err := wrapper.ParseListOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	result, err := wrapper.ListReleases(cfgObj, opts)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.CString(result)
-	return C.int32_t(cerrors.CodeOK)
+func helm_list(cfgH C.uint64_t, optsJSON *C.char, out **C.char, errOut **C.char) C.int32_t {
+	return stringResult(out, errOut, func() (string, error) {
+		cfgObj, err := registry.Get(uint64(cfgH), handles.TypeConfig)
+		if err != nil {
+			return "", err
+		}
+		opts, err := wrapper.ParseListOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return "", err
+		}
+		return wrapper.ListReleases(cfgObj, opts)
+	})
 }
 
 // helm_status returns the release summary JSON (with manifest) for `name`.

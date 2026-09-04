@@ -27,7 +27,7 @@ extern "C" {
 #endif
 
 #define HELM_C_VERSION_MAJOR 0
-#define HELM_C_VERSION_MINOR 1
+#define HELM_C_VERSION_MINOR 2
 #define HELM_C_VERSION_PATCH 0
 
 /* Opaque reference to a Go-side object. 0 is never a valid handle. */
@@ -65,7 +65,7 @@ typedef enum helm_error_code {
 /* Library info                                                        */
 /* ------------------------------------------------------------------ */
 
-/* helm-c library version ("0.1.0"). Caller frees with helm_free_string. */
+/* helm-c library version ("0.2.0"). Caller frees with helm_free_string. */
 char* helm_c_version(void);
 
 /* Exact helm.sh/helm/v4 version compiled in (e.g. "v4.2.3").
@@ -367,6 +367,164 @@ typedef void (*helm_log_callback)(int32_t level, const char* message,
  * untouched. */
 int32_t helm_set_log_handler(helm_log_callback cb, void* user_data,
                              int32_t min_level);
+
+/* ================================================================== */
+/* Additions since 0.1.0 (append-only ABI)                             */
+/* ================================================================== */
+
+/* ------------------------------------------------------------------ */
+/* Chart content, loaders and writers (offline)                        */
+/* ------------------------------------------------------------------ */
+
+/* Non-template files of a loaded chart (README, LICENSE, …) as
+ * [{"name":"README.md","data":"..."}] JSON (caller frees). */
+int32_t helm_chart_files(helm_handle_t chart, char** out, char** error_out);
+
+/* Raw templates of a loaded chart as [{"name","data"}] JSON (caller frees). */
+int32_t helm_chart_templates(helm_handle_t chart, char** out, char** error_out);
+
+/* CRDs under crds/ of the chart and its subcharts as
+ * [{"name","filename","data"}] JSON (caller frees). */
+int32_t helm_chart_crds(helm_handle_t chart, char** out, char** error_out);
+
+/* The chart's values.schema.json document, or "null" when it ships none
+ * (caller frees). */
+int32_t helm_chart_schema(helm_handle_t chart, char** out, char** error_out);
+
+/* Chart.yaml metadata of the subcharts loaded with the chart (charts/), as
+ * a JSON array (caller frees). Declared-but-absent dependencies are in
+ * helm_chart_metadata instead. */
+int32_t helm_chart_dependencies(helm_handle_t chart, char** out, char** error_out);
+
+/* Loads a chart from an in-memory .tgz buffer (no filesystem round trip).
+ * data is borrowed for the call; length must be 1..2^31-1. *out receives a
+ * chart handle; free with helm_chart_free. */
+int32_t helm_chart_load_archive(const uint8_t* data, uint64_t length,
+                                helm_handle_t* out, char** error_out);
+
+/* Unpacks a local .tgz chart archive into dest_dir (creates
+ * dest_dir/<chart name>/). HELM_ERR_CHART_LOAD on a bad archive. */
+int32_t helm_chart_expand(const char* dest_dir, const char* archive_path,
+                          char** error_out);
+
+/* Writes a loaded chart back as a directory tree under dest_dir.
+ * *out_path receives the created chart directory (caller frees). */
+int32_t helm_chart_save_dir(helm_handle_t chart, const char* dest_dir,
+                            char** out_path, char** error_out);
+
+/* Scaffolds a chart named `name` inside `dir` from the starter chart at
+ * starter_dir (`helm create --starter`). *out_path receives the created
+ * directory (caller frees). */
+int32_t helm_chart_create_from(const char* name, const char* dir,
+                               const char* starter_dir, char** out_path,
+                               char** error_out);
+
+/* "sha256:<hex>" digest of a chart archive — the value repository indexes
+ * carry per entry (caller frees). */
+int32_t helm_chart_digest(const char* archive_path, char** out, char** error_out);
+
+/* Clear-signs a packaged chart archive and writes "<archive>.prov" next to
+ * it. opts_json keys: {"key":"<identity in keyring>","keyring":"<PGP secret
+ * keyring>","passphrase_file":""}; key and keyring are required. A protected
+ * key without passphrase_file fails (never prompts). *out_prov_path receives
+ * the .prov path (caller frees). */
+int32_t helm_chart_sign(const char* archive_path, const char* opts_json,
+                        char** out_prov_path, char** error_out);
+
+/* Parses a YAML values document (the -f/--values input) into the JSON
+ * object every other function accepts (caller frees). */
+int32_t helm_values_from_yaml(const char* yaml, char** out, char** error_out);
+
+/* `helm show`: chart definition / values / README / CRDs of a chart
+ * reference (local path, repo chart via opts "chart_repo_url", or oci://)
+ * without installing. client optional (0 = default, honouring plain_http).
+ * opts_json keys: {"format":"all"|"chart"|"values"|"readme"|"crds",
+ * "devel":false} plus the chart_ref keys of helm_install. *out receives the
+ * SDK's text rendering (caller frees). Blocking: network I/O for remote refs. */
+int32_t helm_show(helm_handle_t client, const char* chart_ref,
+                  const char* opts_json, char** out, char** error_out);
+
+/* helm_lint_run with the full `helm lint` option set. opts_json keys:
+ * {"strict":false,"namespace":"","with_subcharts":false,"quiet":false,
+ * "skip_schema_validation":false,"kube_version":""}. */
+int32_t helm_lint_run_opts(const char* path, const char* values_json,
+                           const char* opts_json, char** out, char** error_out);
+
+/* Renders like helm_render but against the cluster behind `config`, so the
+ * `lookup` template function returns live objects. Creates and stores
+ * nothing. Same opts_json as helm_render. Blocking: cluster I/O. */
+int32_t helm_render_with_config(helm_handle_t config, helm_handle_t chart,
+                                const char* values_json, const char* opts_json,
+                                char** out, char** error_out);
+
+/* ------------------------------------------------------------------ */
+/* --set family                                                        */
+/* ------------------------------------------------------------------ */
+
+/* --set-string: every value stays a string ("port=80" -> {"port":"80"}). */
+int32_t helm_strvals_parse_string(const char* s, char** out, char** error_out);
+
+/* --set-json: each value is a JSON document (a={"b":[1,2]}). */
+int32_t helm_strvals_parse_json(const char* s, char** out, char** error_out);
+
+/* --set-literal: the value is taken verbatim, no list/map interpretation. */
+int32_t helm_strvals_parse_literal(const char* s, char** out, char** error_out);
+
+/* --set-file: each value names a file whose contents become the value. */
+int32_t helm_strvals_parse_file(const char* s, char** out, char** error_out);
+
+/* ------------------------------------------------------------------ */
+/* Repositories, dependencies, registries                              */
+/* ------------------------------------------------------------------ */
+
+/* `helm repo index`: indexes the *.tgz in `dir` into dir/index.yaml.
+ * opts_json keys: {"base_url":"","merge":"<existing index.yaml>",
+ * "json":false}. *out receives the generated index as JSON (caller frees). */
+int32_t helm_repo_index_generate(const char* dir, const char* opts_json,
+                                 char** out, char** error_out);
+
+/* `helm dependency list`: each declared dependency of the chart directory
+ * with its status ("ok", "missing", "unpacked", "wrong version", …) as a
+ * JSON array [{"name","version","repository","status"}] (caller frees). */
+int32_t helm_dependency_list(const char* chart_dir, char** out, char** error_out);
+
+/* Semver tags of an oci:// chart reference (which versions exist), newest
+ * first, as a JSON array (caller frees). Blocking: network I/O. */
+int32_t helm_registry_tags(helm_handle_t client, const char* ref,
+                           char** out, char** error_out);
+
+/* Resolves an oci:// reference (with tag) to its manifest descriptor:
+ * {"digest":"sha256:...","media_type":"...","size":N} (caller frees).
+ * Blocking: network I/O. */
+int32_t helm_registry_resolve(helm_handle_t client, const char* ref,
+                              char** out, char** error_out);
+
+/* ------------------------------------------------------------------ */
+/* Cluster configuration extras & release actions                      */
+/* ------------------------------------------------------------------ */
+
+/* Binds a registry client to a config so install/upgrade/show by an oci://
+ * chart_ref use its credentials. client 0 unbinds. The client handle must
+ * stay alive while bound. */
+int32_t helm_config_set_registry_client(helm_handle_t config,
+                                        helm_handle_t client, char** error_out);
+
+/* Probes the config's cluster: HELM_OK when the API server answers,
+ * HELM_ERR_KUBE otherwise. Blocking: one round trip. */
+int32_t helm_config_check_reachable(helm_handle_t config, char** error_out);
+
+/* `helm get all`: the full stored release for `name` —
+ * {"summary":{...},"hooks":[...],"config":{...},"info":{...}}.
+ * opts_json keys: {"revision":0}. */
+int32_t helm_get(helm_handle_t config, const char* name,
+                 const char* opts_json, char** out, char** error_out);
+
+/* `helm test`: runs the release's test hooks. opts_json keys:
+ * {"timeout_seconds":0,"logs":false,"include_names":[],"exclude_names":[]}.
+ * *out receives {"release":{summary},"logs":"..."}; a failing test is
+ * HELM_ERR_RELEASE. Blocking: cluster I/O up to the timeout. */
+int32_t helm_test_run(helm_handle_t config, const char* name,
+                      const char* opts_json, char** out, char** error_out);
 
 #ifdef __cplusplus
 }

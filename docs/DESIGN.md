@@ -61,9 +61,39 @@ public error-code taxonomy and `internal/handles` the registry. Test fixtures (c
 kubeconfig, PGP signing material) are generated at runtime by `internal/testfixtures`;
 the repository commits no test data.
 
+## 6. A config handle's SDK configuration is never mutated by an action
+
+The SDK's `action.Configuration` is designed for a CLI process that builds one per
+command and exits. Two SDK behaviours are unsafe for a long-lived handle shared across
+calls: a client-side dry run replaces the configuration's kube client and release
+storage with fakes (`Install.RunWithContext`), and `helm list -A` re-initializes the
+configuration for the empty namespace. Applied to a shared handle, the first silently
+routes every later action to fakes; the second changes the namespace under other callers.
+
+helm-c therefore keeps the options a config was built from and derives **sibling
+configurations** on demand: a fresh `Init` for another namespace or for all namespaces,
+and a **detached copy** (same clients and storage, its own struct) for any SDK call known
+to mutate its configuration. The shared configuration is read, never written, by an
+action. Cost: one extra `Init` per cross-namespace call, which does not contact the
+cluster (client loading is lazy).
+
+## 7. Remote chart references are pulled through helm-c's own path
+
+The SDK's `ChartPathOptions.LocateChart` resolves `repo/chart` names through the host
+user's `repositories.yaml`, downloads into the user's helm cache, and writes progress to
+`os.Stdout` — three things a library loaded into a host process must not do. helm-c
+resolves a `chart_ref` itself: local paths load directly; remote references (repo chart +
+`chart_repo_url`, or `oci://`) go through `PullChart` into a private scratch directory
+with the same silent logging as every other operation, and the scratch directory is
+removed once the chart is in memory. `EnvSettings` are built in exactly one place
+(`newSettings`), where the repository config and caches are pointed away from the user's
+helm home, so the policy cannot regress one call site at a time. The single deliberate
+exception is plugin post-renderers, which by definition live in the user's plugin
+directory.
+
 ## Use of unsafe
 
-The `capi` package imports `unsafe` in exactly four places, all mandated by the
+The `capi` package imports `unsafe` in exactly three shapes, all mandated by the
 cgo FFI contract and none reachable from library logic:
 
 1. `C.free(unsafe.Pointer(...))` (convert.go `freeCString`, logging.go) — the
@@ -73,6 +103,12 @@ cgo FFI contract and none reachable from library logic:
 2. `unsafe.Pointer` as an opaque user-data slot for the C log callback
    (logging.go). The value is supplied by C, stored, and passed back verbatim —
    Go never dereferences it.
+3. `C.GoBytes(unsafe.Pointer(data), n)` in `helm_chart_load_archive` (extra.go)
+   — copies a caller-owned buffer of the stated, bounds-checked length into Go
+   memory; the C pointer is never retained beyond the call.
+
+The test seam (`testbridge.go`, excluded from the shipped library) additionally
+hands a Go buffer's address to that shim for the duration of one call.
 
 Security scanners flag any `unsafe` import (e.g. gosec G103); those findings are
 accepted-by-design here with inline `#nosec G103` annotations at each site. No

@@ -197,9 +197,10 @@ func TestConfigAndListThroughCAPI(t *testing.T) {
 	require.NotZero(t, h)
 
 	// The fixture kubeconfig points at an unreachable server; actions check
-	// reachability first, so the failure crosses the ABI as a defined error.
+	// reachability first, so the failure crosses the ABI as a defined kube
+	// error — distinguishable from a problem with the release itself.
 	code, _, detail = testList(h, nil)
-	assert.EqualValues(t, cerrors.CodeRelease, code)
+	assert.EqualValues(t, cerrors.CodeKube, code)
 	assert.Contains(t, detail, "unreachable")
 
 	code, detail = testConfigFree(h)

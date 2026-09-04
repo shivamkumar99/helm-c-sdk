@@ -6,26 +6,22 @@ package main
 import "C"
 
 import (
-	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
 // chartDirAction is the shared shim body for chart_dir + opts → status calls.
 func chartDirAction(chartDir *C.char, optsJSON *C.char, errOut **C.char,
-	run func(dir string, opts wrapper.DependencyOptions) error) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if chartDir == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "chart_dir must not be NULL"))
-	}
-	opts, err := wrapper.ParseDependencyOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	if err := run(C.GoString(chartDir), opts); err != nil {
-		return failure(errOut, err)
-	}
-	return C.int32_t(cerrors.CodeOK)
+	run func(dir string, opts wrapper.DependencyOptions) error) C.int32_t {
+	return statusResult(errOut, func() error {
+		if err := requireArgs("chart_dir", chartDir); err != nil {
+			return err
+		}
+		opts, err := wrapper.ParseDependencyOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return err
+		}
+		return run(C.GoString(chartDir), opts)
+	})
 }
 
 // helm_dependency_update resolves the chart's declared dependencies into
@@ -49,18 +45,13 @@ func helm_dependency_build(chartDir *C.char, optsJSON *C.char, errOut **C.char) 
 // *out receives {"file_name","file_hash","signed_by":[...]} JSON.
 //
 //export helm_chart_verify
-func helm_chart_verify(path *C.char, provFile *C.char, keyring *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if path == nil || keyring == nil || out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "path, keyring and out must not be NULL"))
-	}
-	result, err := wrapper.VerifyChart(C.GoString(path), optionalGoString(provFile), C.GoString(keyring))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.CString(result)
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_verify(path *C.char, provFile *C.char, keyring *C.char, out **C.char, errOut **C.char) C.int32_t {
+	return stringResult(out, errOut, func() (string, error) {
+		if err := requireArgs("path and keyring", path, keyring); err != nil {
+			return "", err
+		}
+		return wrapper.VerifyChart(C.GoString(path), optionalGoString(provFile), C.GoString(keyring))
+	})
 }
 
 // helm_get_metadata returns release metadata JSON for `name` (opts key

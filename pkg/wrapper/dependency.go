@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"helm.sh/helm/v4/pkg/cli"
+	"github.com/Masterminds/semver/v3"
+
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	"helm.sh/helm/v4/pkg/downloader"
 	"helm.sh/helm/v4/pkg/getter"
 	repo "helm.sh/helm/v4/pkg/repo/v1"
@@ -20,8 +22,16 @@ import (
 type DependencyOptions struct {
 	SkipRefresh bool   `json:"skip_refresh"` // don't re-download repo indexes first
 	Keyring     string `json:"keyring"`
-	Verify      bool   `json:"verify"`
-	PlainHTTP   bool   `json:"plain_http"` // for oci:// dependencies
+	Verify      bool   `json:"verify"`      // legacy bool: true = "always"
+	VerifyMode  string `json:"verify_mode"` // "never", "always", "if_possible", "later"
+	PlainHTTP   bool   `json:"plain_http"`  // for oci:// dependencies
+	Debug       bool   `json:"debug"`       // SDK debug output through the log handler
+	Username    string `json:"username"`    // basic auth for HTTP repositories
+	Password    string `json:"password"`    //
+	CertFile    string `json:"cert_file"`   // client TLS for HTTP repositories
+	KeyFile     string `json:"key_file"`    //
+	CaFile      string `json:"ca_file"`     //
+	Insecure    bool   `json:"insecure_skip_tls_verify"`
 }
 
 // ParseDependencyOptions strictly decodes optsJSON (docs/DESIGN.md §4).
@@ -32,8 +42,9 @@ func ParseDependencyOptions(optsJSON string) (DependencyOptions, error) {
 // writeRepoConfig registers every HTTP(S) repository the chart's declared
 // dependencies point at in a private repositories.yaml — the Manager refuses
 // URLs it has no repo entry for ("no repository definition"), and we never
-// touch the user's own helm config.
-func writeRepoConfig(chartDir, path string) error {
+// touch the user's own helm config. Credentials/TLS from opts apply to every
+// registered repository.
+func writeRepoConfig(chartDir, path string, opts DependencyOptions) error {
 	c, err := LoadChart(chartDir)
 	if err != nil {
 		return err
@@ -50,9 +61,18 @@ func writeRepoConfig(chartDir, path string) error {
 			continue
 		}
 		seen[url] = true
-		repoFile.Add(&repo.Entry{Name: fmt.Sprintf("helm-c-dep-%d", i), URL: url})
+		repoFile.Add(&repo.Entry{
+			Name:                  fmt.Sprintf("helm-c-dep-%d", i),
+			URL:                   url,
+			Username:              opts.Username,
+			Password:              opts.Password,
+			CertFile:              opts.CertFile,
+			KeyFile:               opts.KeyFile,
+			CAFile:                opts.CaFile,
+			InsecureSkipTLSVerify: opts.Insecure,
+		})
 	}
-	if err := repoFile.WriteFile(path, 0o644); err != nil {
+	if err := repoFile.WriteFile(path, 0o600); err != nil {
 		return cerrors.WithCode(cerrors.CodeIO, err)
 	}
 	return nil
@@ -62,18 +82,24 @@ func writeRepoConfig(chartDir, path string) error {
 // the user's helm config/cache are never touched. Callers must remove the
 // returned cleanup dir.
 func dependencyManager(chartDir string, opts DependencyOptions) (*downloader.Manager, string, error) {
-	cacheDir, err := os.MkdirTemp("", "helm-c-deps-*")
+	verify, err := verificationStrategy(opts.VerifyMode)
 	if err != nil {
-		return nil, "", cerrors.WithCode(cerrors.CodeIO, err)
+		return nil, "", err
+	}
+	if opts.Verify && opts.VerifyMode == "" {
+		verify = downloader.VerifyAlways
 	}
 
-	repoConfig := filepath.Join(cacheDir, "repositories.yaml")
-	if err := writeRepoConfig(chartDir, repoConfig); err != nil {
+	cacheDir, err := privateTempDir("deps")
+	if err != nil {
+		return nil, "", err
+	}
+	settings := settingsInDir(cacheDir)
+	if err := writeRepoConfig(chartDir, settings.RepositoryConfig, opts); err != nil {
 		removeBestEffort(cacheDir)
 		return nil, "", err
 	}
-
-	client, err := NewRegistryClient(RegistryClientOptions{PlainHTTP: opts.PlainHTTP})
+	client, err := defaultClientFor(nil, true, opts.PlainHTTP)
 	if err != nil {
 		removeBestEffort(cacheDir)
 		return nil, "", err
@@ -82,16 +108,15 @@ func dependencyManager(chartDir string, opts DependencyOptions) (*downloader.Man
 	m := &downloader.Manager{
 		Out:              LogWriter(slog.LevelInfo),
 		ChartPath:        chartDir,
-		Getters:          getter.All(cli.New()),
+		Getters:          getter.All(settings),
 		RegistryClient:   client,
-		RepositoryConfig: repoConfig,
-		RepositoryCache:  filepath.Join(cacheDir, "cache"),
-		ContentCache:     filepath.Join(cacheDir, "content"),
+		RepositoryConfig: settings.RepositoryConfig,
+		RepositoryCache:  settings.RepositoryCache,
+		ContentCache:     settings.ContentCache,
 		SkipUpdate:       opts.SkipRefresh,
 		Keyring:          opts.Keyring,
-	}
-	if opts.Verify {
-		m.Verify = downloader.VerifyAlways
+		Verify:           verify,
+		Debug:            opts.Debug,
 	}
 	return m, cacheDir, nil
 }
@@ -116,4 +141,115 @@ func DependencyBuild(chartDir string, opts DependencyOptions) error {
 	}
 	defer removeBestEffort(cacheDir)
 	return cerrors.WithCode(cerrors.CodeRepo, m.Build())
+}
+
+// dependencyEntry is the stable JSON shape of one `helm dependency list`
+// row. Fields are additive-only (ABI).
+type dependencyEntry struct {
+	Name       string `json:"name"`
+	Version    string `json:"version"`
+	Repository string `json:"repository"`
+	Status     string `json:"status"`
+}
+
+// DependencyList reports each declared dependency of the chart at chartDir
+// with its status — the same vocabulary as `helm dependency list`: "ok",
+// "missing", "unpacked", "wrong version", "invalid version", "corrupt",
+// "misnamed", "too many matches". Returns a JSON array.
+func DependencyList(chartDir string) (string, error) {
+	c, err := LoadChart(chartDir)
+	if err != nil {
+		return "", err
+	}
+	out := make([]dependencyEntry, 0, len(c.Metadata.Dependencies))
+	for _, dep := range c.Metadata.Dependencies {
+		out = append(out, dependencyEntry{
+			Name:       dep.Name,
+			Version:    dep.Version,
+			Repository: dep.Repository,
+			Status:     dependencyStatus(chartDir, dep, c),
+		})
+	}
+	return marshalJSON(out)
+}
+
+// dependencyStatus mirrors the SDK's unexported action.Dependency status
+// logic (pkg/action/dependency.go at the pinned release), which is only
+// reachable there through a text table.
+func dependencyStatus(chartDir string, dep *chart.Dependency, parent *chart.Chart) string {
+	pattern := filepath.Join(chartDir, "charts", dep.Name+"-*.tgz")
+	archives, err := filepath.Glob(pattern)
+	switch {
+	case err != nil:
+		return "bad pattern"
+	case len(archives) > 1:
+		var found []string
+		for _, arc := range archives {
+			stem := strings.TrimSuffix(filepath.Base(arc), ".tgz")
+			if _, err := semver.StrictNewVersion(strings.TrimPrefix(stem, dep.Name+"-")); err == nil {
+				found = append(found, arc)
+			}
+		}
+		if len(found) == 1 {
+			if s := archiveStatus(found[0], dep); s != "" {
+				return s
+			}
+		} else if len(found) > 1 {
+			return "too many matches"
+		}
+	case len(archives) == 1:
+		if s := archiveStatus(archives[0], dep); s != "" {
+			return s
+		}
+	}
+
+	var sub *chart.Chart
+	for _, item := range parent.Dependencies() {
+		if item.Name() == dep.Name {
+			sub = item
+		}
+	}
+	if sub == nil {
+		return "missing"
+	}
+	if s := versionStatus(sub.Metadata.Version, dep.Version); s != "" {
+		return s
+	}
+	return "unpacked"
+}
+
+func archiveStatus(archive string, dep *chart.Dependency) string {
+	if _, err := os.Stat(archive); err != nil {
+		return ""
+	}
+	c, err := LoadChart(archive)
+	if err != nil {
+		return "corrupt"
+	}
+	if c.Name() != dep.Name {
+		return "misnamed"
+	}
+	if s := versionStatus(c.Metadata.Version, dep.Version); s != "" {
+		return s
+	}
+	return "ok"
+}
+
+// versionStatus is "" when have satisfies the want constraint.
+func versionStatus(have, want string) string {
+	if have == want {
+		return ""
+	}
+	constraint, err := semver.NewConstraint(want)
+	if err != nil {
+		return "invalid version"
+	}
+	v, err := semver.NewVersion(have)
+	if err != nil {
+		return "invalid version"
+	}
+	if !constraint.Check(v) {
+		return "wrong version"
+	}
+	return ""
 }

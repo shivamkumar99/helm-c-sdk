@@ -81,14 +81,19 @@ func (h *cLogHandler) Handle(_ context.Context, r slog.Record) error {
 	}
 	r.Attrs(appendAttr)
 
+	// The callback runs while the read lock is held, so
+	// helm_set_log_handler (which takes the write lock) cannot return while
+	// a delivery is in flight: once it returns, no callback will touch the
+	// old user_data again. The documented contract forbids the callback
+	// from calling back into helm-c, which is what makes holding the lock
+	// across it deadlock-free.
 	logCBMu.RLock()
-	cb, ud := logCB, logCBData
-	logCBMu.RUnlock()
-	if cb == nil {
+	defer logCBMu.RUnlock()
+	if logCB == nil {
 		return nil
 	}
 	msg := C.CString(b.String())
-	C.helmc_invoke_log_cb(cb, cLevel(r.Level), msg, ud)
+	C.helmc_invoke_log_cb(logCB, cLevel(r.Level), msg, logCBData)
 	// Released after the synchronous callback returns, through the one
 	// audited unsafe.Pointer site (convert.go freeCString; see
 	// docs/DESIGN.md, "Use of unsafe").

@@ -5,7 +5,7 @@ BUILD   := build
 # Library version — baked into filenames and linker metadata so multiple
 # versions can coexist side by side. MAJOR bumps on ABI breaks (which the
 # append-only rule forbids within a major).
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 MAJOR   := $(word 1,$(subst ., ,$(VERSION)))
 
 ifeq ($(OS),Windows_NT)
@@ -33,6 +33,10 @@ else
   endif
   HARNESS  := harness
   PTHREAD  := -pthread
+  # Bake the build dir in as an rpath so the harness finds the library even
+  # where the dynamic-loader environment variables are stripped (macOS SIP
+  # does this for processes spawned from protected binaries).
+  RPATH    := -Wl,-rpath,$(abspath $(BUILD))
 endif
 
 .PHONY: all build test vet fixtures harness leak-check pkgconfig clean
@@ -66,20 +70,20 @@ fixtures:
 
 harness: build fixtures
 	$(CC) -Wall -Wextra -Werror $(PTHREAD) -o $(BUILD)/$(HARNESS) test/c-harness/main.c \
-		-I include -L $(BUILD) -lhelm_c
+		-I include -L $(BUILD) -lhelm_c $(RPATH)
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) \
 		LD_LIBRARY_PATH=$(BUILD) DYLD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)
 
 # Linux-only: harness under AddressSanitizer/LeakSanitizer.
 leak-check: build fixtures
 	$(CC) -Wall -Wextra -Werror $(PTHREAD) -fsanitize=address -o $(BUILD)/$(HARNESS)-asan \
-		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c
+		test/c-harness/main.c -I include -L $(BUILD) -lhelm_c $(RPATH)
 	HELMC_SIGNING_DIR=$(BUILD)/signing HELMC_WORK_DIR=$$(mktemp -d) ASAN_OPTIONS=detect_leaks=1 \
 		LD_LIBRARY_PATH=$(BUILD) ./$(BUILD)/$(HARNESS)-asan
 
 # Generates a pkg-config file for consumers; VERSION comes from the release
 # tag in CI (defaults to the dev version).
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 PREFIX  ?= /usr/local
 
 pkgconfig:

@@ -16,16 +16,13 @@ import (
 // *error_out, freed by the caller with helm_free_string).
 //
 //export helm_release_name_validate
-func helm_release_name_validate(name *C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if name == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "name must not be NULL"))
-	}
-	if err := wrapper.ValidateReleaseName(C.GoString(name)); err != nil {
-		return failure(errOut, err)
-	}
-	return C.int32_t(cerrors.CodeOK)
+func helm_release_name_validate(name *C.char, errOut **C.char) C.int32_t {
+	return statusResult(errOut, func() error {
+		if err := requireArgs("name", name); err != nil {
+			return err
+		}
+		return wrapper.ValidateReleaseName(C.GoString(name))
+	})
 }
 
 // helm_chart_load loads a chart from a directory or .tgz archive and returns
@@ -50,88 +47,50 @@ func helm_chart_load(path *C.char, out *C.uint64_t, errOut **C.char) (code C.int
 // *out (caller frees with helm_free_string).
 //
 //export helm_chart_metadata
-func helm_chart_metadata(h C.uint64_t, out **C.char, errOut **C.char) (code C.int32_t) {
-	return chartToJSON(h, out, errOut, wrapper.ChartMetadataJSON)
+func helm_chart_metadata(h C.uint64_t, out **C.char, errOut **C.char) C.int32_t {
+	return chartHandleShim(h, out, errOut, wrapper.ChartMetadataJSON)
 }
 
 // helm_chart_values writes the chart's default values as JSON into *out
 // (caller frees with helm_free_string).
 //
 //export helm_chart_values
-func helm_chart_values(h C.uint64_t, out **C.char, errOut **C.char) (code C.int32_t) {
-	return chartToJSON(h, out, errOut, wrapper.ChartValuesJSON)
-}
-
-// chartToJSON is the shared shim body for chart→JSON accessors.
-func chartToJSON(h C.uint64_t, out **C.char, errOut **C.char, render func(any) (string, error)) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
-	}
-	obj, err := registry.Get(uint64(h), handles.TypeChart)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	jsonStr, err := render(obj)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.CString(jsonStr)
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_values(h C.uint64_t, out **C.char, errOut **C.char) C.int32_t {
+	return chartHandleShim(h, out, errOut, wrapper.ChartValuesJSON)
 }
 
 // helm_chart_save archives the chart into dest_dir; *out_path receives the
 // .tgz path (caller frees with helm_free_string).
 //
 //export helm_chart_save
-func helm_chart_save(h C.uint64_t, destDir *C.char, outPath **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if destDir == nil || outPath == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "dest_dir and out_path must not be NULL"))
-	}
-	obj, err := registry.Get(uint64(h), handles.TypeChart)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	path, err := wrapper.SaveChart(obj, C.GoString(destDir))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*outPath = C.CString(path)
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_save(h C.uint64_t, destDir *C.char, outPath **C.char, errOut **C.char) C.int32_t {
+	return chartHandleShim(h, outPath, errOut, func(obj any) (string, error) {
+		if err := requireArgs("dest_dir", destDir); err != nil {
+			return "", err
+		}
+		return wrapper.SaveChart(obj, C.GoString(destDir))
+	})
 }
 
 // helm_chart_create scaffolds a new chart named name inside dir; *out_path
 // receives the created chart directory (caller frees with helm_free_string).
 //
 //export helm_chart_create
-func helm_chart_create(name *C.char, dir *C.char, outPath **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if name == nil || dir == nil || outPath == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "name, dir and out_path must not be NULL"))
-	}
-	path, err := wrapper.CreateChart(C.GoString(name), C.GoString(dir))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*outPath = C.CString(path)
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_create(name *C.char, dir *C.char, outPath **C.char, errOut **C.char) C.int32_t {
+	return stringResult(outPath, errOut, func() (string, error) {
+		if err := requireArgs("name and dir", name, dir); err != nil {
+			return "", err
+		}
+		return wrapper.CreateChart(C.GoString(name), C.GoString(dir))
+	})
 }
 
 // helm_chart_free releases a chart handle. Type-checked: freeing a non-chart
 // handle returns HELM_ERR_WRONG_HANDLE_TYPE and leaves it alive.
 //
 //export helm_chart_free
-func helm_chart_free(h C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if err := registry.FreeTyped(uint64(h), handles.TypeChart); err != nil {
-		return failure(errOut, err)
-	}
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_free(h C.uint64_t, errOut **C.char) C.int32_t {
+	return freeTyped(h, handles.TypeChart, errOut, nil)
 }
 
 // helm_lint_run lints the chart at path (values_json optional, may be NULL)
@@ -139,18 +98,13 @@ func helm_chart_free(h C.uint64_t, errOut **C.char) (code C.int32_t) {
 // the call itself only fails on malformed input.
 //
 //export helm_lint_run
-func helm_lint_run(path *C.char, valuesJSON *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if path == nil || out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "path and out must not be NULL"))
-	}
-	report, err := wrapper.LintChart(C.GoString(path), optionalGoString(valuesJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.CString(report)
-	return C.int32_t(cerrors.CodeOK)
+func helm_lint_run(path *C.char, valuesJSON *C.char, out **C.char, errOut **C.char) C.int32_t {
+	return stringResult(out, errOut, func() (string, error) {
+		if err := requireArgs("path", path); err != nil {
+			return "", err
+		}
+		return wrapper.LintChart(C.GoString(path), optionalGoString(valuesJSON))
+	})
 }
 
 // helm_package_run packages the chart at path into a .tgz (opts_json
@@ -158,20 +112,15 @@ func helm_lint_run(path *C.char, valuesJSON *C.char, out **C.char, errOut **C.ch
 // archive path (caller frees with helm_free_string).
 //
 //export helm_package_run
-func helm_package_run(path *C.char, optsJSON *C.char, outPath **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if path == nil || outPath == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "path and out_path must not be NULL"))
-	}
-	opts, err := wrapper.ParsePackageOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	out, err := wrapper.PackageChart(C.GoString(path), opts)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*outPath = C.CString(out)
-	return C.int32_t(cerrors.CodeOK)
+func helm_package_run(path *C.char, optsJSON *C.char, outPath **C.char, errOut **C.char) C.int32_t {
+	return stringResult(outPath, errOut, func() (string, error) {
+		if err := requireArgs("path", path); err != nil {
+			return "", err
+		}
+		opts, err := wrapper.ParsePackageOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return "", err
+		}
+		return wrapper.PackageChart(C.GoString(path), opts)
+	})
 }

@@ -6,7 +6,6 @@ package main
 import "C"
 
 import (
-	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
@@ -14,16 +13,6 @@ import (
 // JSON object written to *out (caller frees with helm_free_string).
 //
 //export helm_strvals_parse
-func helm_strvals_parse(s *C.char, out **C.char, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if s == nil || out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "s and out must not be NULL"))
-	}
-	jsonStr, err := wrapper.ParseSetString(C.GoString(s))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.CString(jsonStr)
-	return C.int32_t(cerrors.CodeOK)
+func helm_strvals_parse(s *C.char, out **C.char, errOut **C.char) C.int32_t {
+	return strvalsShim(s, out, errOut, wrapper.ParseSetString)
 }

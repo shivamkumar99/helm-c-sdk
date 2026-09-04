@@ -42,18 +42,8 @@ func helm_config_new(optsJSON *C.char, out *C.uint64_t, errOut **C.char) (code C
 // kubeconfig_content).
 //
 //export helm_config_free
-func helm_config_free(h C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	obj, err := registry.Get(uint64(h), handles.TypeConfig)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	if err := registry.FreeTyped(uint64(h), handles.TypeConfig); err != nil {
-		return failure(errOut, err)
-	}
-	wrapper.CloseConfig(obj)
-	return C.int32_t(cerrors.CodeOK)
+func helm_config_free(h C.uint64_t, errOut **C.char) C.int32_t {
+	return freeTyped(h, handles.TypeConfig, errOut, wrapper.CloseConfig)
 }
 
 // ctxEntry pairs a context with its cancel func so freeing always releases
@@ -61,6 +51,16 @@ func helm_config_free(h C.uint64_t, errOut **C.char) (code C.int32_t) {
 type ctxEntry struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+// ctxEntryFor resolves a context handle. The registry's type tag guarantees
+// the entry is a *ctxEntry, so the assertion here can only ever succeed.
+func ctxEntryFor(h C.uint64_t) (*ctxEntry, error) {
+	obj, err := registry.Get(uint64(h), handles.TypeContext)
+	if err != nil {
+		return nil, err
+	}
+	return obj.(*ctxEntry), nil
 }
 
 // helm_context_new creates a cancellation context for long-running actions.
@@ -83,32 +83,24 @@ func helm_context_new(out *C.uint64_t, errOut **C.char) (code C.int32_t) {
 // repeatedly.
 //
 //export helm_context_cancel
-func helm_context_cancel(h C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	obj, err := registry.Get(uint64(h), handles.TypeContext)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	obj.(*ctxEntry).cancel()
-	return C.int32_t(cerrors.CodeOK)
+func helm_context_cancel(h C.uint64_t, errOut **C.char) C.int32_t {
+	return statusResult(errOut, func() error {
+		entry, err := ctxEntryFor(h)
+		if err != nil {
+			return err
+		}
+		entry.cancel()
+		return nil
+	})
 }
 
 // helm_context_free cancels and releases a context handle.
 //
 //export helm_context_free
-func helm_context_free(h C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	obj, err := registry.Get(uint64(h), handles.TypeContext)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	obj.(*ctxEntry).cancel()
-	if err := registry.FreeTyped(uint64(h), handles.TypeContext); err != nil {
-		return failure(errOut, err)
-	}
-	return C.int32_t(cerrors.CodeOK)
+func helm_context_free(h C.uint64_t, errOut **C.char) C.int32_t {
+	return freeTyped(h, handles.TypeContext, errOut, func(obj any) {
+		obj.(*ctxEntry).cancel()
+	})
 }
 
 // ctxOrBackground resolves an optional context handle (0 = background).
@@ -116,9 +108,9 @@ func ctxOrBackground(h C.uint64_t) (context.Context, error) {
 	if h == 0 {
 		return context.Background(), nil
 	}
-	obj, err := registry.Get(uint64(h), handles.TypeContext)
+	entry, err := ctxEntryFor(h)
 	if err != nil {
 		return nil, err
 	}
-	return obj.(*ctxEntry).ctx, nil
+	return entry.ctx, nil
 }

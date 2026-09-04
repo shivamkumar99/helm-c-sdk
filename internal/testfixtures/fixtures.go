@@ -178,12 +178,21 @@ func signFixtureArchive(dir, tgz string) error {
 	if err := entity.Serialize(&pub); err != nil {
 		return fmt.Errorf("serializing public key: %w", err)
 	}
-	return os.WriteFile(filepath.Join(dir, "pubring.gpg"), pub.Bytes(), 0o600)
+	if err := os.WriteFile(filepath.Join(dir, "pubring.gpg"), pub.Bytes(), 0o600); err != nil {
+		return err
+	}
+	// The secret keyring lets suites exercise signing, not just verifying.
+	var priv bytes.Buffer
+	if err := entity.SerializePrivate(&priv, nil); err != nil {
+		return fmt.Errorf("serializing private key: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "secring.gpg"), priv.Bytes(), 0o600)
 }
 
 // GenerateSigning creates a signed chart archive, its .prov provenance file,
-// and a public keyring under dir (a throwaway PGP key generated per call):
-// <dir>/testchart-0.1.0.tgz, .tgz.prov, and pubring.gpg.
+// and both keyrings under dir (a throwaway PGP key generated per call):
+// <dir>/testchart-0.1.0.tgz, .tgz.prov, pubring.gpg (verification) and
+// secring.gpg (signing; identity "helm-c-sdk-test", no passphrase).
 func GenerateSigning(dir string) error {
 	tgz, err := packageFixtureChart(dir)
 	if err != nil {

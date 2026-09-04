@@ -9,10 +9,21 @@ updates:
     groups:
       go-deps:
         patterns: ["*"]
+    ignore:
+      # The Helm SDK is pinned to an exact release on purpose: bumping it is
+      # a deliberate, standalone change run through every gate on all three
+      # OSes with behaviour changes noted, never an automated PR.
+      - dependency-name: "helm.sh/helm/v4"
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      # One PR for all actions, so the codeql-action init/analyze/upload-sarif
+      # steps move together — the analyze step refuses a configuration file
+      # written by a different init version.
+      github-actions:
+        patterns: ["*"]
   - package-ecosystem: docker
     directory: "/"
     schedule:

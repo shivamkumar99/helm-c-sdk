@@ -273,7 +273,9 @@ func TestStrvalsVariants(t *testing.T) {
 
 	f := filepath.Join(t.TempDir(), "v.txt")
 	require.NoError(t, os.WriteFile(f, []byte("from-file"), 0o600))
-	out, err = ParseSetFile("k=" + f)
+	// --set escaping rules apply to the path: backslash escapes, so a
+	// Windows path is given with forward slashes (as with the helm CLI).
+	out, err = ParseSetFile("k=" + filepath.ToSlash(f))
 	require.NoError(t, err)
 	assert.Equal(t, `{"k":"from-file"}`, out)
 

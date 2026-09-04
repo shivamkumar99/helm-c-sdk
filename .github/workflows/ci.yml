@@ -195,12 +195,12 @@ jobs:
         run: |
           mkdir -p reports
           go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -quiet -fmt sarif -out reports/gosec.sarif ./... || true
-          gosec -quiet -fmt text -out reports/gosec.txt ./...
+          gosec -quiet -exclude-generated -fmt sarif -out reports/gosec.sarif ./... || true
+          gosec -quiet -exclude-generated -fmt text -out reports/gosec.txt ./...
       - name: Upload gosec SARIF to Security tab (maintainer-only view)
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: reports/gosec.sarif
           category: gosec
@@ -254,7 +254,7 @@ jobs:
       - name: Upload Codacy SARIF to Security tab
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security
-        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
         with:
           sarif_file: codacy.sarif
           category: codacy

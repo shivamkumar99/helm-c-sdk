@@ -3,6 +3,7 @@ package wrapper
 import (
 	"helm.sh/helm/v4/pkg/chart/common"
 	commonutil "helm.sh/helm/v4/pkg/chart/common/util"
+	chart "helm.sh/helm/v4/pkg/chart/v2"
 	chartutil "helm.sh/helm/v4/pkg/chart/v2/util"
 	"helm.sh/helm/v4/pkg/engine"
 
@@ -68,43 +69,48 @@ func renderCapabilities(opts RenderOptions) (*common.Capabilities, error) {
 	return caps, nil
 }
 
-// RenderChart renders the chart's templates offline (no cluster; the lookup
-// template function returns empty results) and returns
-// {"path/to/template.yaml": "rendered manifest", ...} as JSON.
-//
-// Dependency conditions, tags and import-values are processed first, as an
-// install would (chartutil.ProcessDependencies) — the SDK's engine alone
-// renders every subchart regardless of its condition. Like the SDK's own
-// install, this processing updates the loaded chart in place.
-func RenderChart(chartObj any, valuesJSON string, opts RenderOptions) (string, error) {
+// prepareRender does everything both render paths share: recover the
+// chart, decode the overrides, derive the capabilities, process subchart
+// dependencies (conditions, tags, import-values — as an install would;
+// like the SDK's own install this updates the loaded chart in place) and
+// build the render values.
+func prepareRender(chartObj any, valuesJSON string, opts RenderOptions) (*chart.Chart, common.Values, error) {
 	c, err := AsChart(chartObj)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	vals, err := unmarshalValues(valuesJSON)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	caps, err := renderCapabilities(opts)
 	if err != nil {
-		return "", err
+		return nil, nil, err
 	}
 	if err := chartutil.ProcessDependencies(c, vals); err != nil {
-		return "", cerrors.WithCode(cerrors.CodeValues, err)
+		return nil, nil, cerrors.WithCode(cerrors.CodeValues, err)
 	}
-
-	releaseOpts := common.ReleaseOptions{
+	renderValues, err := commonutil.ToRenderValues(c, vals, common.ReleaseOptions{
 		Name:      opts.Name,
 		Namespace: opts.Namespace,
 		Revision:  opts.Revision,
 		IsInstall: opts.IsInstall,
 		IsUpgrade: opts.IsUpgrade,
-	}
-	renderValues, err := commonutil.ToRenderValues(c, vals, releaseOpts, caps)
+	}, caps)
 	if err != nil {
-		return "", cerrors.WithCode(cerrors.CodeValues, err)
+		return nil, nil, cerrors.WithCode(cerrors.CodeValues, err)
 	}
+	return c, renderValues, nil
+}
 
+// RenderChart renders the chart's templates offline (no cluster; the lookup
+// template function returns empty results) and returns
+// {"path/to/template.yaml": "rendered manifest", ...} as JSON.
+func RenderChart(chartObj any, valuesJSON string, opts RenderOptions) (string, error) {
+	c, renderValues, err := prepareRender(chartObj, valuesJSON, opts)
+	if err != nil {
+		return "", err
+	}
 	eng := engine.Engine{Strict: opts.Strict, EnableDNS: opts.EnableDNS}
 	manifests, err := eng.Render(c, renderValues)
 	if err != nil {
@@ -118,34 +124,18 @@ func RenderChart(chartObj any, valuesJSON string, opts RenderOptions) (string, e
 // (SDK engine.RenderWithClient). Nothing is created or stored.
 func RenderChartWithConfig(cfgObj, chartObj any, valuesJSON string, opts RenderOptions) (string, error) {
 	return withConfig(cfgObj, func(cfg *Config) (string, error) {
-		c, err := AsChart(chartObj)
+		// A configuration built without a cluster (e.g. a bare memory-driver
+		// one) has no REST getter; the SDK would dereference nil.
+		if cfg.Cfg.RESTClientGetter == nil {
+			return "", cerrors.New(cerrors.CodeKube, "cluster-aware render needs a cluster connection")
+		}
+		c, renderValues, err := prepareRender(chartObj, valuesJSON, opts)
 		if err != nil {
 			return "", err
-		}
-		vals, err := unmarshalValues(valuesJSON)
-		if err != nil {
-			return "", err
-		}
-		caps, err := renderCapabilities(opts)
-		if err != nil {
-			return "", err
-		}
-		if err := chartutil.ProcessDependencies(c, vals); err != nil {
-			return "", cerrors.WithCode(cerrors.CodeValues, err)
 		}
 		restConfig, err := cfg.Cfg.RESTClientGetter.ToRESTConfig()
 		if err != nil {
 			return "", cerrors.WithCode(cerrors.CodeKube, err)
-		}
-		renderValues, err := commonutil.ToRenderValues(c, vals, common.ReleaseOptions{
-			Name:      opts.Name,
-			Namespace: opts.Namespace,
-			Revision:  opts.Revision,
-			IsInstall: opts.IsInstall,
-			IsUpgrade: opts.IsUpgrade,
-		}, caps)
-		if err != nil {
-			return "", cerrors.WithCode(cerrors.CodeValues, err)
 		}
 		manifests, err := engine.RenderWithClient(c, renderValues, restConfig)
 		if err != nil {

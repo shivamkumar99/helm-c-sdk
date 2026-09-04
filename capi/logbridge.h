@@ -12,7 +12,7 @@ typedef void (*helmc_log_callback)(int32_t level, const char* message,
                                    void* user_data);
 
 /* Defined in logbridge.c — cgo cannot define C functions in the preamble of
- * a file that uses //export. */
+ * a file that uses //export. Called from Go only (capi/logging.go). */
 void helmc_invoke_log_cb(helmc_log_callback cb, int32_t level,
                          const char* message, void* user_data);
 

@@ -114,7 +114,7 @@ func testChartFree(h uint64) (int32, string) {
 // caller must free via the returned cleanup.
 func optionalCString(s *string) (*C.char, func()) {
 	if s == nil {
-		return nil, func() {}
+		return nil, func() { /* nothing was allocated for a NULL argument */ }
 	}
 	cs := C.CString(*s)
 	return cs, func() { freeCString(cs) }

@@ -1,2 +1,5 @@
 build/
 *.h.gch
+
+# sonar-scanner work directory (local analysis only)
+.scannerwork/

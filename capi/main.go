@@ -5,4 +5,4 @@
 package main
 
 // main is required by -buildmode=c-shared; it never runs.
-func main() {}
+func main() { /* a c-shared library has no entry point; the linker only needs the symbol */ }

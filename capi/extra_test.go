@@ -128,7 +128,10 @@ func TestValuesAndStrvalsShims(t *testing.T) {
 
 	f := filepath.Join(t.TempDir(), "v")
 	require.NoError(t, os.WriteFile(f, []byte("filed"), 0o600))
-	code, out, _ = testStrvalsFile(strp("k=" + f))
+	// --set-file reads its value with --set escaping rules, where a
+	// backslash escapes the next character; a Windows path must therefore
+	// be given with forward slashes, exactly as with the helm CLI.
+	code, out, _ = testStrvalsFile(strp("k=" + filepath.ToSlash(f)))
 	assert.EqualValues(t, cerrors.CodeOK, code)
 	assert.Equal(t, `{"k":"filed"}`, out)
 

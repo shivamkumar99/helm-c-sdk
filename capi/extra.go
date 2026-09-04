@@ -128,6 +128,16 @@ func helm_chart_dependencies(h C.uint64_t, out **C.char, errOut **C.char) C.int3
 	return chartHandleShim(h, out, errOut, wrapper.ChartDependenciesJSON)
 }
 
+// archiveLength narrows the caller's buffer length to what C.GoBytes takes,
+// refusing 0 and anything past the C int range so the narrowing below can
+// never wrap.
+func archiveLength(length uint64) (int32, bool) {
+	if length == 0 || length > math.MaxInt32 {
+		return 0, false
+	}
+	return int32(length), true // #nosec G115 -- bounded to MaxInt32 by the check above
+}
+
 // helm_chart_load_archive loads a chart from an in-memory .tgz buffer and
 // returns a chart handle in *out (free with helm_chart_free). data is
 // borrowed for the call only.
@@ -139,13 +149,14 @@ func helm_chart_load_archive(data *C.uint8_t, length C.uint64_t, out *C.uint64_t
 	if data == nil || out == nil {
 		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "data and out must not be NULL"))
 	}
-	if length == 0 || length > math.MaxInt32 {
+	n, ok := archiveLength(uint64(length))
+	if !ok {
 		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "length must be 1..2^31-1"))
 	}
 	// unsafe justification: C.GoBytes copies a caller-owned buffer of the
 	// stated length into Go memory; the pointer is never retained (see
 	// docs/DESIGN.md, "Use of unsafe").
-	buf := C.GoBytes(unsafe.Pointer(data), C.int(length)) // #nosec G103 -- required by the C.GoBytes signature
+	buf := C.GoBytes(unsafe.Pointer(data), C.int(n)) // #nosec G103 -- required by the C.GoBytes signature
 	c, err := wrapper.LoadChartArchive(buf)
 	if err != nil {
 		return failure(errOut, err)

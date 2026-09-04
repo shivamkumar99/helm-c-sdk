@@ -315,7 +315,7 @@ func showFormat(s string) (action.ShowOutputFormat, error) {
 // download path into a scratch directory the returned cleanup removes.
 func localChartPath(client *registry.Client, chartRef string, opts ChartRefOptions) (string, func(), error) {
 	if _, err := os.Stat(chartRef); err == nil {
-		return chartRef, func() {}, nil
+		return chartRef, func() { /* nothing was materialised for a local path */ }, nil
 	}
 	cfg := &Config{Cfg: action.NewConfiguration(), Namespace: "default"}
 	cfg.Cfg.RegistryClient = client

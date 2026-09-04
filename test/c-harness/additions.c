@@ -43,48 +43,59 @@ static void additions_signing(const char* tgz) {
     FREE_AND_NULL(out);
 }
 
+/* Load the archive back through the in-memory bytes entry point. */
+static void additions_load_from_bytes(const char* tgz) {
+    FILE* f = fopen(tgz, "rb");
+    if (f != NULL) {
+        fseek(f, 0, SEEK_END);
+        long n = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        uint8_t* buf = (n > 0) ? (uint8_t*)malloc((size_t)n) : NULL;
+        if (buf != NULL && fread(buf, 1, (size_t)n, f) == (size_t)n) {
+            helm_handle_t h2 = 0;
+            CHECK(helm_chart_load_archive(buf, (uint64_t)n, &h2, NULL) == HELM_OK,
+                  "chart loads from an in-memory archive");
+            CHECK(helm_chart_free(h2, NULL) == HELM_OK, "in-memory chart freed");
+        }
+        free(buf);
+        fclose(f);
+    }
+    helm_handle_t none = 0;
+    CHECK(helm_chart_load_archive(NULL, 0, &none, NULL) == HELM_ERR_INVALID_ARG,
+          "NULL archive buffer rejected");
+}
+
+/* Digest the archive and expand it back into a directory. */
+static void additions_digest_and_expand(const char* tgz, const char* workdir) {
+    char* digest = NULL;
+    CHECK(helm_chart_digest(tgz, &digest, NULL) == HELM_OK && digest != NULL &&
+              strncmp(digest, "sha256:", 7) == 0,
+          "archive digest computed");
+    FREE_AND_NULL(digest);
+
+    char expanded[600];
+    snprintf(expanded, sizeof(expanded), "%s/expanded", workdir);
+    CHECK(helm_chart_expand(expanded, tgz, NULL) == HELM_OK, "archive expanded");
+}
+
+/* Index the directory holding the archive. */
+static void additions_repo_index(const char* workdir) {
+    char* idx = NULL;
+    CHECK(helm_repo_index_generate(workdir, "{\"base_url\":\"https://x/\"}", &idx, NULL)
+              == HELM_OK && idx != NULL && strstr(idx, "harnesschart") != NULL,
+          "repo index generated");
+    FREE_AND_NULL(idx);
+}
+
 /* save -> digest -> load from bytes -> expand -> sign/verify -> repo index. */
 static void additions_archive_round_trip(helm_handle_t h, const char* workdir) {
-    /* Archive round trip: save -> digest -> load from bytes -> expand. */
     char* tgz = NULL;
     CHECK(helm_chart_save(h, workdir, &tgz, NULL) == HELM_OK && tgz != NULL, "additions: saved");
     if (tgz != NULL) {
-        char* digest = NULL;
-        CHECK(helm_chart_digest(tgz, &digest, NULL) == HELM_OK && digest != NULL &&
-                  strncmp(digest, "sha256:", 7) == 0,
-              "archive digest computed");
-        FREE_AND_NULL(digest);
-
-        FILE* f = fopen(tgz, "rb");
-        if (f != NULL) {
-            fseek(f, 0, SEEK_END);
-            long n = ftell(f);
-            fseek(f, 0, SEEK_SET);
-            uint8_t* buf = (n > 0) ? (uint8_t*)malloc((size_t)n) : NULL;
-            if (buf != NULL && fread(buf, 1, (size_t)n, f) == (size_t)n) {
-                helm_handle_t h2 = 0;
-                CHECK(helm_chart_load_archive(buf, (uint64_t)n, &h2, NULL) == HELM_OK,
-                      "chart loads from an in-memory archive");
-                CHECK(helm_chart_free(h2, NULL) == HELM_OK, "in-memory chart freed");
-            }
-            free(buf);
-            fclose(f);
-        }
-        CHECK(helm_chart_load_archive(NULL, 0, &h, NULL) == HELM_ERR_INVALID_ARG,
-              "NULL archive buffer rejected");
-
-        char expanded[600];
-        snprintf(expanded, sizeof(expanded), "%s/expanded", workdir);
-        CHECK(helm_chart_expand(expanded, tgz, NULL) == HELM_OK, "archive expanded");
-
+        additions_digest_and_expand(tgz, workdir);
+        additions_load_from_bytes(tgz);
         additions_signing(tgz);
-
-        /* Repo index over the directory holding the archive. */
-        char* idx = NULL;
-        CHECK(helm_repo_index_generate(workdir, "{\"base_url\":\"https://x/\"}", &idx, NULL)
-                  == HELM_OK && idx != NULL && strstr(idx, "harnesschart") != NULL,
-              "repo index generated");
-        FREE_AND_NULL(idx);
+        additions_repo_index(workdir);
         FREE_AND_NULL(tgz);
     }
 }
@@ -102,10 +113,25 @@ static void additions_writers(helm_handle_t h, const char* workdir) {
     CHECK(helm_chart_free(h, NULL) == HELM_OK, "additions: chart freed");
 }
 
+/* The --set expression family. */
+static void additions_set_family(void) {
+    char* out = NULL;
+    CHECK(helm_strvals_parse_string("p=80", &out, NULL) == HELM_OK && out != NULL &&
+              strstr(out, "\"80\"") != NULL,
+          "--set-string keeps strings");
+    FREE_AND_NULL(out);
+    CHECK(helm_strvals_parse_json("a={\"b\":1}", &out, NULL) == HELM_OK, "--set-json parses");
+    FREE_AND_NULL(out);
+    CHECK(helm_strvals_parse_literal("a=b,c", &out, NULL) == HELM_OK, "--set-literal parses");
+    FREE_AND_NULL(out);
+    CHECK(helm_strvals_parse_file("k=/no/such/file", &out, NULL) == HELM_ERR_VALUES,
+          "--set-file with a missing file is a defined error");
+    FREE_AND_NULL(out);
+}
+
 /* YAML values, show, lint options, the --set family, dependency list. */
 static void additions_values_show_lint_set(void) {
     char* out = NULL;
-    /* Values, show, lint options, --set family. */
     CHECK(helm_values_from_yaml("a: 1\n", &out, NULL) == HELM_OK && out != NULL &&
               strstr(out, "\"a\":1") != NULL,
           "YAML values parsed");
@@ -118,17 +144,7 @@ static void additions_values_show_lint_set(void) {
               out != NULL,
           "lint with options runs");
     FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_string("p=80", &out, NULL) == HELM_OK && out != NULL &&
-              strstr(out, "\"80\"") != NULL,
-          "--set-string keeps strings");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_json("a={\"b\":1}", &out, NULL) == HELM_OK, "--set-json parses");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_literal("a=b,c", &out, NULL) == HELM_OK, "--set-literal parses");
-    FREE_AND_NULL(out);
-    CHECK(helm_strvals_parse_file("k=/no/such/file", &out, NULL) == HELM_ERR_VALUES,
-          "--set-file with a missing file is a defined error");
-    FREE_AND_NULL(out);
+    additions_set_family();
     CHECK(helm_dependency_list(g_chart_dir, &out, NULL) == HELM_OK && out != NULL,
           "dependency list runs");
     FREE_AND_NULL(out);

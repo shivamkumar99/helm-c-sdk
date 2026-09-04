@@ -7,7 +7,6 @@ import "C"
 
 import (
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
@@ -16,22 +15,18 @@ import (
 // helm_registry_client_free.
 //
 //export helm_registry_client_new
-func helm_registry_client_new(optsJSON *C.char, out *C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
-	}
-	opts, err := wrapper.ParseRegistryClientOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	client, err := wrapper.NewRegistryClient(opts)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.uint64_t(registry.Put(handles.TypeRegistryClient, client))
-	return C.int32_t(cerrors.CodeOK)
+func helm_registry_client_new(optsJSON *C.char, out *C.uint64_t, errOut **C.char) C.int32_t {
+	return handleResult(out, errOut, func() (uint64, error) {
+		opts, err := wrapper.ParseRegistryClientOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return 0, err
+		}
+		client, err := wrapper.NewRegistryClient(opts)
+		if err != nil {
+			return 0, err
+		}
+		return registry.Put(handles.TypeRegistryClient, client), nil
+	})
 }
 
 // helm_registry_client_free releases a registry-client handle. Type-checked
@@ -95,19 +90,12 @@ func registryClientOrNil(h C.uint64_t) (any, error) {
 //
 //export helm_pull
 func helm_pull(clientH C.uint64_t, chartRef *C.char, optsJSON *C.char, out **C.char, errOut **C.char) C.int32_t {
-	return stringResult(out, errOut, func() (string, error) {
-		if err := requireArgs("chart_ref", chartRef); err != nil {
-			return "", err
-		}
-		clientObj, err := registryClientOrNil(clientH)
-		if err != nil {
-			return "", err
-		}
+	return chartRefClientResult(clientH, chartRef, out, errOut, func(clientObj any, ref string) (string, error) {
 		opts, err := wrapper.ParsePullOptions(optionalGoString(optsJSON))
 		if err != nil {
 			return "", err
 		}
-		return wrapper.PullChart(clientObj, C.GoString(chartRef), opts)
+		return wrapper.PullChart(clientObj, ref, opts)
 	})
 }
 

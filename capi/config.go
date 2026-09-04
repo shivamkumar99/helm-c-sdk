@@ -9,7 +9,6 @@ import (
 	"context"
 
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
@@ -19,22 +18,18 @@ import (
 // action. *out receives a handle; free with helm_config_free.
 //
 //export helm_config_new
-func helm_config_new(optsJSON *C.char, out *C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
-	}
-	opts, err := wrapper.ParseConfigOptions(optionalGoString(optsJSON))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	cfg, err := wrapper.NewConfig(opts)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.uint64_t(registry.Put(handles.TypeConfig, cfg))
-	return C.int32_t(cerrors.CodeOK)
+func helm_config_new(optsJSON *C.char, out *C.uint64_t, errOut **C.char) C.int32_t {
+	return handleResult(out, errOut, func() (uint64, error) {
+		opts, err := wrapper.ParseConfigOptions(optionalGoString(optsJSON))
+		if err != nil {
+			return 0, err
+		}
+		cfg, err := wrapper.NewConfig(opts)
+		if err != nil {
+			return 0, err
+		}
+		return registry.Put(handles.TypeConfig, cfg), nil
+	})
 }
 
 // helm_config_free releases a config handle (type-checked, idempotent) and
@@ -67,15 +62,11 @@ func ctxEntryFor(h C.uint64_t) (*ctxEntry, error) {
 // *out receives a handle; free with helm_context_free (freeing also cancels).
 //
 //export helm_context_new
-func helm_context_new(out *C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	*out = C.uint64_t(registry.Put(handles.TypeContext, &ctxEntry{ctx: ctx, cancel: cancel}))
-	return C.int32_t(cerrors.CodeOK)
+func helm_context_new(out *C.uint64_t, errOut **C.char) C.int32_t {
+	return handleResult(out, errOut, func() (uint64, error) {
+		ctx, cancel := context.WithCancel(context.Background())
+		return registry.Put(handles.TypeContext, &ctxEntry{ctx: ctx, cancel: cancel}), nil
+	})
 }
 
 // helm_context_cancel cancels the context; a blocked helm_install/helm_upgrade

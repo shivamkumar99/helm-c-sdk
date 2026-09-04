@@ -7,7 +7,6 @@ import "C"
 
 import (
 	"github.com/shivamkumar99/helm-c-sdk/internal/handles"
-	"github.com/shivamkumar99/helm-c-sdk/pkg/cerrors"
 	"github.com/shivamkumar99/helm-c-sdk/pkg/wrapper"
 )
 
@@ -29,18 +28,17 @@ func helm_release_name_validate(name *C.char, errOut **C.char) C.int32_t {
 // an opaque chart handle in *out. Free with helm_chart_free.
 //
 //export helm_chart_load
-func helm_chart_load(path *C.char, out *C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if path == nil || out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "path and out must not be NULL"))
-	}
-	c, err := wrapper.LoadChart(C.GoString(path))
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.uint64_t(registry.Put(handles.TypeChart, c))
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_load(path *C.char, out *C.uint64_t, errOut **C.char) C.int32_t {
+	return handleResult(out, errOut, func() (uint64, error) {
+		if err := requireArgs("path", path); err != nil {
+			return 0, err
+		}
+		c, err := wrapper.LoadChart(C.GoString(path))
+		if err != nil {
+			return 0, err
+		}
+		return registry.Put(handles.TypeChart, c), nil
+	})
 }
 
 // helm_chart_metadata writes the chart's Chart.yaml metadata as JSON into

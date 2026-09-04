@@ -48,6 +48,42 @@ func stringResult(out, errOut **C.char, run func() (string, error)) (code C.int3
 	return C.int32_t(cerrors.CodeOK)
 }
 
+// handleResult is the shared body of every shim that yields one opaque
+// handle: error-out reset, panic guard, out-param check, delegate, store.
+func handleResult(out *C.uint64_t, errOut **C.char, run func() (uint64, error)) (code C.int32_t) {
+	clearErrorOut(errOut)
+	defer recoverToCode(&code, errOut)
+	if out == nil {
+		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "out must not be NULL"))
+	}
+	h, err := run()
+	if err != nil {
+		return failure(errOut, err)
+	}
+	*out = C.uint64_t(h)
+	return C.int32_t(cerrors.CodeOK)
+}
+
+// chartRefClientResult is the shared prologue of shims acting on a chart
+// reference through an optional registry client (0 = default client).
+func chartRefClientResult(
+	clientH C.uint64_t,
+	chartRef *C.char,
+	out, errOut **C.char,
+	run func(clientObj any, ref string) (string, error),
+) C.int32_t {
+	return stringResult(out, errOut, func() (string, error) {
+		if err := requireArgs("chart_ref", chartRef); err != nil {
+			return "", err
+		}
+		clientObj, err := registryClientOrNil(clientH)
+		if err != nil {
+			return "", err
+		}
+		return run(clientObj, C.GoString(chartRef))
+	})
+}
+
 // statusResult is the shared body of every status-only shim.
 func statusResult(errOut **C.char, run func() error) (code C.int32_t) {
 	clearErrorOut(errOut)
@@ -143,26 +179,25 @@ func archiveLength(length uint64) (int32, bool) {
 // borrowed for the call only.
 //
 //export helm_chart_load_archive
-func helm_chart_load_archive(data *C.uint8_t, length C.uint64_t, out *C.uint64_t, errOut **C.char) (code C.int32_t) {
-	clearErrorOut(errOut)
-	defer recoverToCode(&code, errOut)
-	if data == nil || out == nil {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "data and out must not be NULL"))
-	}
-	n, ok := archiveLength(uint64(length))
-	if !ok {
-		return failure(errOut, cerrors.New(cerrors.CodeInvalidArg, "length must be 1..2^31-1"))
-	}
-	// unsafe justification: C.GoBytes copies a caller-owned buffer of the
-	// stated length into Go memory; the pointer is never retained (see
-	// docs/DESIGN.md, "Use of unsafe").
-	buf := C.GoBytes(unsafe.Pointer(data), C.int(n)) // #nosec G103 -- required by the C.GoBytes signature
-	c, err := wrapper.LoadChartArchive(buf)
-	if err != nil {
-		return failure(errOut, err)
-	}
-	*out = C.uint64_t(registry.Put(handles.TypeChart, c))
-	return C.int32_t(cerrors.CodeOK)
+func helm_chart_load_archive(data *C.uint8_t, length C.uint64_t, out *C.uint64_t, errOut **C.char) C.int32_t {
+	return handleResult(out, errOut, func() (uint64, error) {
+		if data == nil {
+			return 0, cerrors.New(cerrors.CodeInvalidArg, "data must not be NULL")
+		}
+		n, ok := archiveLength(uint64(length))
+		if !ok {
+			return 0, cerrors.New(cerrors.CodeInvalidArg, "length must be 1..2^31-1")
+		}
+		// unsafe justification: C.GoBytes copies a caller-owned buffer of the
+		// stated length into Go memory; the pointer is never retained (see
+		// docs/DESIGN.md, "Use of unsafe").
+		buf := C.GoBytes(unsafe.Pointer(data), C.int(n)) // #nosec G103 -- required by the C.GoBytes signature
+		c, err := wrapper.LoadChartArchive(buf)
+		if err != nil {
+			return 0, err
+		}
+		return registry.Put(handles.TypeChart, c), nil
+	})
 }
 
 // helm_chart_expand unpacks a local .tgz chart archive into dest_dir.
@@ -256,19 +291,12 @@ func helm_values_from_yaml(yaml *C.char, out **C.char, errOut **C.char) C.int32_
 //
 //export helm_show
 func helm_show(clientH C.uint64_t, chartRef *C.char, optsJSON *C.char, out **C.char, errOut **C.char) C.int32_t {
-	return stringResult(out, errOut, func() (string, error) {
-		if err := requireArgs("chart_ref", chartRef); err != nil {
-			return "", err
-		}
-		clientObj, err := registryClientOrNil(clientH)
-		if err != nil {
-			return "", err
-		}
+	return chartRefClientResult(clientH, chartRef, out, errOut, func(clientObj any, ref string) (string, error) {
 		opts, err := wrapper.ParseShowOptions(optionalGoString(optsJSON))
 		if err != nil {
 			return "", err
 		}
-		return wrapper.ShowChart(clientObj, C.GoString(chartRef), opts)
+		return wrapper.ShowChart(clientObj, ref, opts)
 	})
 }
 

@@ -40,4 +40,4 @@ jobs:
           for f in test/c-harness/*.c; do
             gcc -c -I include "$f" -o "/tmp/$(basename "$f").o"
           done
-      - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+      - uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4

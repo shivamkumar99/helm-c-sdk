@@ -28,7 +28,7 @@ extern "C" {
 
 #define HELM_C_VERSION_MAJOR 0
 #define HELM_C_VERSION_MINOR 2
-#define HELM_C_VERSION_PATCH 0
+#define HELM_C_VERSION_PATCH 1
 
 /* Opaque reference to a Go-side object. 0 is never a valid handle. */
 typedef uint64_t helm_handle_t;
@@ -65,7 +65,7 @@ typedef enum helm_error_code {
 /* Library info                                                        */
 /* ------------------------------------------------------------------ */
 
-/* helm-c library version ("0.2.0"). Caller frees with helm_free_string. */
+/* helm-c library version ("0.2.1"). Caller frees with helm_free_string. */
 char* helm_c_version(void);
 
 /* Exact helm.sh/helm/v4 version compiled in (e.g. "v4.2.3").

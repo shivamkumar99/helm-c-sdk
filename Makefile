@@ -5,7 +5,7 @@ BUILD   := build
 # Library version — baked into filenames and linker metadata so multiple
 # versions can coexist side by side. MAJOR bumps on ABI breaks (which the
 # append-only rule forbids within a major).
-VERSION ?= 0.2.0
+VERSION ?= 0.2.1
 MAJOR   := $(word 1,$(subst ., ,$(VERSION)))
 
 ifeq ($(OS),Windows_NT)
@@ -83,7 +83,7 @@ leak-check: build fixtures
 
 # Generates a pkg-config file for consumers; VERSION comes from the release
 # tag in CI (defaults to the dev version).
-VERSION ?= 0.2.0
+VERSION ?= 0.2.1
 PREFIX  ?= /usr/local
 
 pkgconfig:

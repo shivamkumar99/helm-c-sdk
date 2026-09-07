@@ -29,8 +29,12 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux-amd64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
           - os: macos-latest
             platform: darwin-arm64
+          - os: macos-15-intel
+            platform: darwin-amd64
           - os: windows-latest
             platform: windows-amd64
     runs-on: ${{ matrix.os }}
@@ -116,7 +120,9 @@ jobs:
         run: |
           VER=${REL_VERSION#v}
           cp "extracted/helm-c-linux-amd64/libhelm_c.so.${VER}" "dist/libhelm_c-${VER}-linux-amd64.so"
+          cp "extracted/helm-c-linux-arm64/libhelm_c.so.${VER}" "dist/libhelm_c-${VER}-linux-arm64.so"
           cp "extracted/helm-c-darwin-arm64/libhelm_c.${VER}.dylib" "dist/libhelm_c-${VER}-darwin-arm64.dylib"
+          cp "extracted/helm-c-darwin-amd64/libhelm_c.${VER}.dylib" "dist/libhelm_c-${VER}-darwin-amd64.dylib"
           cp "extracted/helm-c-windows-amd64/libhelm_c.dll" "dist/libhelm_c-${VER}-windows-amd64.dll"
           cp include/helm_c.h dist/helm_c.h
       - name: Generate SBOM (SPDX JSON)

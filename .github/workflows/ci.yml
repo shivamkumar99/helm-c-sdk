@@ -299,12 +299,36 @@ jobs:
           go-version-file: go.mod
       - name: osv-scanner (findings to file)
         shell: bash
+        env:
+          # Pinned, and installed as a release binary rather than with
+          # `go install @latest`: the scanner's own go directive moves ahead
+          # of ours (v2.6.0 wants Go 1.27 while this module pins 1.26), which
+          # broke the job without a line of our code changing. A prebuilt
+          # binary has no opinion about our toolchain.
+          OSV_VERSION: 2.6.0
+          OSV_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
         run: |
           mkdir -p reports
-          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@latest \
-            || go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-          osv-scanner scan --recursive . > reports/osv-scanner.txt 2>&1 \
-            || osv-scanner -r . > reports/osv-scanner.txt 2>&1
+          curl -sSfL -o /tmp/osv-scanner \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SHA256}  /tmp/osv-scanner" | sha256sum -c -
+          chmod +x /tmp/osv-scanner
+          set +e
+          /tmp/osv-scanner scan --recursive . > reports/osv-scanner.txt 2>&1
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            # This gate blocks: the shared library ships its dependencies
+            # compiled in, so an advisory against one is real for everyone
+            # who installs it. The database is live, so this can turn red
+            # without any code change — the fix is normally a dependency
+            # bump. Only the totals go to the log; the detail rides the
+            # uploaded report, since this log is world-readable.
+            echo "::error::osv-scanner reported findings; see the uploaded report"
+            grep -E "^Total|can be fixed" reports/osv-scanner.txt || true
+            exit 1
+          fi
+          grep -E "^Total" reports/osv-scanner.txt || echo "no known vulnerabilities"
       - name: Upload osv report (private repo only)
         if: always() && github.event.repository.private
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5

@@ -194,9 +194,15 @@ jobs:
         shell: bash
         run: |
           mkdir -p reports
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -quiet -exclude-generated -fmt sarif -out reports/gosec.sarif ./... || true
-          gosec -quiet -exclude-generated -fmt text -out reports/gosec.txt ./...
+          # Pinned: with @latest, a gosec release started skipping the report
+          # file entirely under -quiet when there are no findings, silently
+          # breaking the Security-tab upload. Findings still go to files only
+          # (-out); without -quiet the console carries scan progress, not
+          # finding details.
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+          gosec -exclude-generated -fmt sarif -out reports/gosec.sarif ./... || true
+          gosec -exclude-generated -fmt text -out reports/gosec.txt ./...
+          test -s reports/gosec.sarif  # the upload must never silently starve
       - name: Upload gosec SARIF to Security tab (maintainer-only view)
         if: always()
         continue-on-error: true # needs a public repo or Advanced Security

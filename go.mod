@@ -6,7 +6,7 @@ toolchain go1.26.6
 
 require (
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/ProtonMail/go-crypto v1.4.1
+	github.com/ProtonMail/go-crypto v1.5.0
 	github.com/stretchr/testify v1.12.1
 	helm.sh/helm/v4 v4.2.3
 )
